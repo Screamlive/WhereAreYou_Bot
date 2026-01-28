@@ -139,6 +139,34 @@ def get_user_groups(tg_id: int) -> list[tuple[int, str, str]]:
     conn.close()
     return rows
 
+def user_has_any_group(tg_id: int) -> bool:
+    return len(get_user_groups(tg_id)) > 0
+
+def user_is_group_admin_any(tg_id: int) -> bool:
+    return any(role == "admin" for _, _, role in get_user_groups(tg_id))
+
+def user_in_group(tg_id: int, group_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT 1 FROM group_memberships WHERE user_id=? AND group_id=?
+    """, (tg_id, group_id))
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+def has_pending_group_request(tg_id: int, group_id: int, req_type: str) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT 1
+        FROM group_requests
+        WHERE user_id=? AND group_id=? AND type=? AND status='pending'
+    """, (tg_id, group_id, req_type))
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
 def is_group_admin(tg_id: int, group_id: int) -> bool:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -224,6 +252,9 @@ admin_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="Список сотрудников")
         ],
         [
+            KeyboardButton(text="Заявки в группу")
+        ],
+        [
             KeyboardButton(text="Заявки на отсутствие"),
             KeyboardButton(text="Выгрузить отсутствия (CSV)")
         ],
@@ -270,10 +301,41 @@ user_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Добавить отсутствие")],
         [KeyboardButton(text="Мои отсутствия")],
         [KeyboardButton(text="Мои группы")],
+        [KeyboardButton(text="Запроситься в группу")],
         [KeyboardButton(text="Добавить отсутствие другому сотруднику")]
     ],
     resize_keyboard=True
 )
+
+group_admin_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Заявки в группу")],
+        [KeyboardButton(text="Добавить отсутствие")],
+        [KeyboardButton(text="Мои отсутствия")],
+        [KeyboardButton(text="Мои группы")],
+        [KeyboardButton(text="Запроситься в группу")],
+        [KeyboardButton(text="Добавить отсутствие другому сотруднику")],
+        [KeyboardButton(text="Сменить группу")]
+    ],
+    resize_keyboard=True
+)
+
+no_group_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Запроситься в группу")]
+    ],
+    resize_keyboard=True
+)
+
+def get_role_menu(tg_id: int) -> ReplyKeyboardMarkup:
+    if is_superadmin(tg_id):
+        return admin_menu
+    groups = get_user_groups(tg_id)
+    if not groups:
+        return no_group_menu
+    if any(role == "admin" for _, _, role in groups):
+        return group_admin_menu
+    return user_menu
 
 ###############################################################################
 # /start
@@ -298,8 +360,18 @@ async def cmd_start(message: types.Message):
         return
 
     # Если пользователь одобрен
-    if is_user_admin(tg_id):
-        await message.answer("Здравствуйте, Администратор!", reply_markup=admin_menu)
+    if not is_superadmin(tg_id) and not user_has_any_group(tg_id):
+        await message.answer(
+            "Вы пока не состоите ни в одной группе. "
+            "Подайте заявку на вступление.",
+            reply_markup=no_group_menu
+        )
+        return
+
+    if is_superadmin(tg_id):
+        await message.answer("Здравствуйте, Суперадминистратор!", reply_markup=admin_menu)
+    elif user_is_group_admin_any(tg_id):
+        await message.answer("Здравствуйте, Администратор группы!", reply_markup=group_admin_menu)
     else:
         await message.answer("Добро пожаловать, Пользователь!", reply_markup=user_menu)
 
@@ -1001,6 +1073,166 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
     await cb.answer()
     await state.clear()
 
+
+###############################################################################
+# Заявки в группу (админ группы / суперадмин)
+###############################################################################
+@dp.message(lambda msg: msg.text == "Заявки в группу")
+async def show_group_requests(message: types.Message):
+    user_id = message.from_user.id
+    if not is_superadmin(user_id) and not user_is_group_admin_any(user_id):
+        await message.answer("Нет прав.")
+        return
+
+    group_id = None
+    if not is_superadmin(user_id):
+        group_id = get_last_group_id(user_id)
+        if not group_id:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            return
+        if not is_group_admin(user_id, group_id):
+            await message.answer("Нет прав.")
+            return
+    else:
+        group_id = get_last_group_id(user_id)
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute("""
+            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
+            FROM group_requests gr
+            JOIN users u ON u.telegram_id = gr.user_id
+            JOIN groups g ON g.id = gr.group_id
+            WHERE gr.status='pending' AND gr.group_id=?
+            ORDER BY u.fullname
+        """, (group_id,))
+    else:
+        cur.execute("""
+            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
+            FROM group_requests gr
+            JOIN users u ON u.telegram_id = gr.user_id
+            JOIN groups g ON g.id = gr.group_id
+            WHERE gr.status='pending'
+            ORDER BY g.name, u.fullname
+        """)
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await message.answer("Нет заявок в группу.")
+        return
+
+    for req_id, req_user_id, fullname, username, gid, gname, req_type in rows:
+        user_disp = fullname
+        if username:
+            user_disp += f" (@{username})"
+        type_label = "вступление" if req_type == "join" else "выход"
+        text = (
+            f"Заявка #{req_id}\n"
+            f"Группа: {gname} (ID={gid})\n"
+            f"Тип: {type_label}\n"
+            f"Пользователь: {user_disp} (ID={req_user_id})"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Одобрить", callback_data=f"grp_req_approve:{req_id}"),
+            InlineKeyboardButton(text="Отклонить", callback_data=f"grp_req_decline:{req_id}")
+        ]])
+        await message.answer(text, reply_markup=kb)
+
+
+@dp.callback_query(lambda c: c.data.startswith("grp_req_approve:") or c.data.startswith("grp_req_decline:"))
+async def handle_group_request(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    action, req_id_str = cb.data.split(":", 1)
+    try:
+        req_id = int(req_id_str)
+    except ValueError:
+        await cb.answer("Некорректная заявка.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT user_id, group_id, type, status
+        FROM group_requests
+        WHERE id=?
+    """, (req_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        await cb.answer("Заявка не найдена.", show_alert=True)
+        return
+
+    req_user_id, group_id, req_type, status = row
+    if status != "pending":
+        conn.close()
+        await cb.answer("Заявка уже обработана.", show_alert=True)
+        return
+
+    if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
+        conn.close()
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    now = datetime.datetime.now().isoformat()
+
+    if action == "grp_req_approve":
+        if req_type == "join":
+            if not user_in_group(req_user_id, group_id):
+                cur.execute("""
+                    INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
+                    VALUES (?, ?, 'member', ?, ?)
+                """, (req_user_id, group_id, now, user_id))
+        elif req_type == "leave":
+            cur.execute("""
+                DELETE FROM group_memberships
+                WHERE user_id=? AND group_id=?
+            """, (req_user_id, group_id))
+
+        cur.execute("""
+            UPDATE group_requests
+            SET status='approved', reviewed_at=?, reviewed_by=?
+            WHERE id=?
+        """, (now, user_id, req_id))
+        conn.commit()
+        conn.close()
+
+        await cb.message.answer(f"Заявка #{req_id} одобрена.")
+        try:
+            await bot.send_message(
+                req_user_id,
+                f"Ваш запрос на {('вступление в группу' if req_type == 'join' else 'выход из группы')} "
+                f"«{group_name}» одобрен."
+            )
+        except:
+            pass
+        await cb.answer()
+        log_action(user_id, f"group_request approved {req_id}")
+        return
+
+    # decline
+    cur.execute("""
+        UPDATE group_requests
+        SET status='declined', reviewed_at=?, reviewed_by=?
+        WHERE id=?
+    """, (now, user_id, req_id))
+    conn.commit()
+    conn.close()
+
+    await cb.message.answer(f"Заявка #{req_id} отклонена.")
+    try:
+        await bot.send_message(
+            req_user_id,
+            f"Ваш запрос на {('вступление в группу' if req_type == 'join' else 'выход из группы')} "
+            f"«{group_name}» отклонён."
+        )
+    except:
+        pass
+    await cb.answer()
+    log_action(user_id, f"group_request declined {req_id}")
+
 ###############################################################################
 # Сменить рабочую группу (админ/суперадмин)
 ###############################################################################
@@ -1307,6 +1539,9 @@ async def add_absence_start(message: types.Message, state: FSMContext):
     if not is_user_approved(message.from_user.id):
         await message.answer("Ваш аккаунт не одобрен.")
         return
+    if not is_superadmin(message.from_user.id) and not user_has_any_group(message.from_user.id):
+        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        return
 
     # 1) Создадим Reply-клавиатуру с кнопкой «Отмена»
     cancel_kb = ReplyKeyboardMarkup(
@@ -1456,6 +1691,9 @@ async def show_my_absences(message: types.Message):
     if not is_user_approved(user_id):
         await message.answer("Вы не одобрены.")
         return
+    if not is_superadmin(user_id) and not user_has_any_group(user_id):
+        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        return
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -1515,6 +1753,84 @@ async def show_my_groups(message: types.Message):
         lines.append(f"- {name} (ID={gid}, роль: {role_label})")
 
     await message.answer("Ваши группы:\n" + "\n".join(lines))
+
+
+@dp.message(lambda msg: msg.text == "Запроситься в группу")
+async def request_join_group_start(message: types.Message):
+    user_id = message.from_user.id
+    if not user_exists_in_db(user_id):
+        await message.answer("Вы не зарегистрированы.")
+        return
+    if not is_user_approved(user_id):
+        await message.answer("Ваш аккаунт не одобрен.")
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer("Группы пока не созданы.")
+        return
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"join_group:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите группу для вступления:", reply_markup=inline_kb)
+
+
+@dp.callback_query(lambda c: c.data.startswith("join_group:"))
+async def request_join_group(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    if not is_user_approved(user_id):
+        await cb.answer("Ваш аккаунт не одобрен.", show_alert=True)
+        return
+
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer("Группа не найдена.", show_alert=True)
+        return
+
+    if user_in_group(user_id, group_id):
+        await cb.answer("Вы уже состоите в этой группе.", show_alert=True)
+        return
+
+    if has_pending_group_request(user_id, group_id, "join"):
+        await cb.answer("Заявка уже отправлена и ожидает решения.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO group_requests (user_id, group_id, type, status, requested_at, requested_by)
+        VALUES (?, ?, 'join', 'pending', ?, ?)
+    """, (user_id, group_id, datetime.datetime.now().isoformat(), user_id))
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    await cb.message.answer(f"Заявка на вступление в группу «{group_name}» отправлена.")
+    await cb.answer()
+
+    # Уведомим админов группы и суперадминов
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Одобрить", callback_data=f"grp_req_approve:{req_id}"),
+        InlineKeyboardButton(text="Отклонить", callback_data=f"grp_req_decline:{req_id}")
+    ]])
+    text_admin = (
+        f"Запрос на вступление в группу «{group_name}»\n"
+        f"От: {get_user_fullname(user_id)}"
+    )
+    admin_ids = set(get_group_admins(group_id) + get_admins())
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+        except:
+            pass
 
 @dp.message(lambda msg: msg.text == "Удалить мои отсутствия")
 async def admin_delete_my_absences(message: types.Message):
@@ -2387,6 +2703,9 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
     if not is_user_approved(message.from_user.id):
         await message.answer("Вы не одобрены, не можете добавлять отсутствие другим.")
         return
+    if not is_superadmin(message.from_user.id) and not user_has_any_group(message.from_user.id):
+        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        return
 
     # Сбросим текущее состояние, если вдруг пользователь был в другом процессе
     await state.clear()
@@ -2606,32 +2925,23 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
 
 async def broadcast_new_menu():
     """
-    Рассылает новое меню всем одобренным пользователям:
-    - Админам: admin_menu
-    - Обычным: user_menu
+    Рассылает новое меню всем одобренным пользователям.
     """
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     # Берём только одобренных (is_approved=1), т.к. не имеет смысла обновлять не одобренным
-    cur.execute("SELECT telegram_id, is_admin FROM users WHERE is_approved=1")
+    cur.execute("SELECT telegram_id FROM users WHERE is_approved=1")
     rows = cur.fetchall()
     conn.close()
 
     updated_count = 0
-    for (tg_id, is_adm) in rows:
+    for (tg_id,) in rows:
         try:
-            if is_adm == 1:
-                await bot.send_message(
-                    tg_id,
-                    "Бот обновлён! Вот новое админ-меню:",
-                    reply_markup=admin_menu
-                )
-            else:
-                await bot.send_message(
-                    tg_id,
-                    "Бот обновлён! Вот ваше меню:",
-                    reply_markup=user_menu
-                )
+            await bot.send_message(
+                tg_id,
+                "Бот обновлён! Вот ваше меню:",
+                reply_markup=get_role_menu(tg_id)
+            )
             updated_count += 1
         except Exception as e:
             logging.warning(f"Не удалось отправить меню пользователю {tg_id}: {e}")
@@ -2662,10 +2972,7 @@ async def fallback_handler(message: types.Message):
         await message.answer("Ваш аккаунт не одобрен. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
         return
 
-    if is_user_admin(tg_id):
-        await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=admin_menu)
-    else:
-        await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=user_menu)
+    await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=get_role_menu(tg_id))
 
 #######################
 # Глобальный хендлер "Отмена" (Reply-кнопка)
@@ -2678,12 +2985,10 @@ async def cancel_process(message: types.Message, state: FSMContext):
     """
     await state.clear()
 
-    if is_user_admin(message.from_user.id):
-        await message.answer("Операция отменена. Возвращаю вас в меню администратора.", 
-                             reply_markup=admin_menu)
-    else:
-        await message.answer("Операция отменена. Возвращаю вас в меню пользователя.", 
-                             reply_markup=user_menu)
+    await message.answer(
+        "Операция отменена. Возвращаю вас в меню.",
+        reply_markup=get_role_menu(message.from_user.id)
+    )
 
 ###############################################################################
 # Запуск
