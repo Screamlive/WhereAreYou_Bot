@@ -30,7 +30,15 @@ def main() -> int:
     conn.close()
 
     tables = {r[0] for r in rows} - {"sqlite_sequence"}
-    expected = {"users", "absences", "logs", "edit_requests"}
+    expected = {
+        "users",
+        "absences",
+        "logs",
+        "edit_requests",
+        "groups",
+        "group_memberships",
+        "group_requests",
+    }
     missing = expected - tables
 
     if missing:

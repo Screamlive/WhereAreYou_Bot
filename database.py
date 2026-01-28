@@ -6,6 +6,10 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
+    def column_exists(table: str, column: str) -> bool:
+        cur.execute(f"PRAGMA table_info({table})")
+        return any(row[1] == column for row in cur.fetchall())
+
     # Таблица пользователей
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -16,6 +20,8 @@ def init_db():
             is_admin INTEGER DEFAULT 0
         )
     ''')
+    if not column_exists("users", "last_group_id"):
+        cur.execute("ALTER TABLE users ADD COLUMN last_group_id INTEGER")
 
     # Таблица отсутствий
     cur.execute('''
@@ -51,6 +57,47 @@ def init_db():
             new_ed TEXT,
             new_comment TEXT,
             user_id INTEGER
+        )
+    ''')
+
+    # NEW: Таблица групп
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            created_at TEXT,
+            created_by INTEGER
+        )
+    ''')
+
+    # NEW: Участники групп (many-to-many)
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS group_memberships (
+            user_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member',
+            created_at TEXT,
+            created_by INTEGER,
+            PRIMARY KEY (user_id, group_id),
+            FOREIGN KEY(user_id) REFERENCES users(telegram_id),
+            FOREIGN KEY(group_id) REFERENCES groups(id)
+        )
+    ''')
+
+    # NEW: Запросы на вступление/выход из группы
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS group_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT,
+            reviewed_at TEXT,
+            requested_by INTEGER,
+            reviewed_by INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(telegram_id),
+            FOREIGN KEY(group_id) REFERENCES groups(id)
         )
     ''')
 
