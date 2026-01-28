@@ -167,6 +167,22 @@ def has_pending_group_request(tg_id: int, group_id: int, req_type: str) -> bool:
     conn.close()
     return row is not None
 
+def get_admin_scope(tg_id: int) -> tuple[bool, int | None, bool]:
+    """
+    Возвращает (есть_доступ, group_id, нужно_выбрать_группу).
+    Для суперадмина group_id=None означает глобальный режим.
+    """
+    if is_superadmin(tg_id):
+        return True, get_last_group_id(tg_id), False
+    if not user_is_group_admin_any(tg_id):
+        return False, None, False
+    group_id = get_last_group_id(tg_id)
+    if not group_id:
+        return False, None, True
+    if not is_group_admin(tg_id, group_id):
+        return False, None, False
+    return True, group_id, False
+
 def is_group_admin(tg_id: int, group_id: int) -> bool:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -310,7 +326,22 @@ user_menu = ReplyKeyboardMarkup(
 
 group_admin_menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Заявки в группу")],
+        [
+            KeyboardButton(text="Заявки в группу"),
+            KeyboardButton(text="Список сотрудников")
+        ],
+        [
+            KeyboardButton(text="Заявки на отсутствие"),
+            KeyboardButton(text="Выгрузить отсутствия (CSV)")
+        ],
+        [
+            KeyboardButton(text="Выгрузить отсутствия за сегодня"),
+            KeyboardButton(text="Посмотреть отсутствия сотрудника")
+        ],
+        [
+            KeyboardButton(text="Удалить отсутствие сотрудника"),
+            KeyboardButton(text="Удалить сотрудника")
+        ],
         [KeyboardButton(text="Добавить отсутствие")],
         [KeyboardButton(text="Мои отсутствия")],
         [KeyboardButton(text="Мои группы")],
@@ -641,17 +672,36 @@ async def list_pending_users(message: types.Message):
 
 @dp.message(lambda msg: msg.text == "Список сотрудников")
 async def list_approved_users(message: types.Message):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав.")
         return
 
+    if group_id:
+        members = get_group_members(group_id)
+        if not members:
+            await message.answer("В группе нет сотрудников.")
+            return
+        text_list = "Сотрудники группы:\n"
+        for uid, fullname, username, role in members:
+            role_label = "админ" if role == "admin" else "участник"
+            uname = f" (@{username})" if username else ""
+            text_list += f"- {fullname}{uname} (ID={uid}, {role_label})\n"
+        await message.answer(text_list)
+        return
+
+    # Глобально (суперадмин)
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("""
-    SELECT telegram_id, fullname
-    FROM users
-    WHERE is_approved=1
-    ORDER BY fullname
+        SELECT telegram_id, fullname, username
+        FROM users
+        WHERE is_approved=1
+        ORDER BY fullname
     """)
     rows = cur.fetchall()
     conn.close()
@@ -661,8 +711,9 @@ async def list_approved_users(message: types.Message):
         return
 
     text_list = "Одобренные сотрудники:\n"
-    for (tid, fname) in rows:
-     text_list += f"- {fname} (ID={tid})\n"
+    for (uid, fname, username) in rows:
+        uname = f" (@{username})" if username else ""
+        text_list += f"- {fname}{uname} (ID={uid})\n"
     await message.answer(text_list)
 
 ###############################################################################
@@ -1476,8 +1527,16 @@ async def list_admins_cmd(message: types.Message):
 ###############################################################################
 @dp.message(lambda msg: msg.text == "Удалить сотрудника")
 async def remove_user_prompt(message: types.Message):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав.")
+        return
+    if not group_id:
+        await message.answer("Для удаления сотрудника выберите рабочую группу (кнопка «Сменить группу»).")
         return
 
     # NEW: кнопка «Отмена»
@@ -1490,26 +1549,20 @@ async def remove_user_prompt(message: types.Message):
         reply_markup=cancel_kb
     )
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_approved=1
-        AND is_admin=0
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        await message.answer("Нет (не админ) сотрудников для удаления.")
+    members = get_group_members(group_id)
+    if not members:
+        await message.answer("В группе нет сотрудников.")
         return
 
     kb_rows = []
-    for (tid, fname) in rows:
+    for (tid, fname, username, role) in members:
+        role_label = "админ" if role == "admin" else "участник"
+        label = f"{fname}"
+        if username:
+            label += f" (@{username})"
+        label += f" [{role_label}]"
         kb_rows.append([
-            InlineKeyboardButton(text=fname, callback_data=f"remove_user:{tid}")
+            InlineKeyboardButton(text=label, callback_data=f"remove_user:{tid}")
         ])
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
@@ -1517,21 +1570,34 @@ async def remove_user_prompt(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith("remove_user:"))
 async def callback_remove_user(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if not group_id:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
+    if not user_in_group(user_id, group_id):
+        await cb.answer("Пользователь не найден в группе.", show_alert=True)
+        return
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("DELETE FROM absences WHERE user_id=?", (user_id,))
-    cur.execute("DELETE FROM users WHERE telegram_id=?", (user_id,))
+    cur.execute("DELETE FROM group_memberships WHERE user_id=? AND group_id=?", (user_id, group_id))
+    cur.execute("""
+        UPDATE users
+        SET last_group_id=NULL
+        WHERE telegram_id=? AND last_group_id=?
+    """, (user_id, group_id))
     conn.commit()
     conn.close()
 
-    await cb.message.answer(f"Сотрудник {user_id} удалён.")
-    log_action(cb.from_user.id, f"remove_user {user_id}")
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    await cb.message.answer(f"Сотрудник {user_id} удалён из группы {group_name}.")
+    log_action(admin_id, f"remove_user_from_group {user_id} group={group_id}")
     await cb.answer()
 
 ###############################################################################
@@ -1657,8 +1723,11 @@ async def process_comment(message: types.Message, state: FSMContext):
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
-    # Уведомим админов
-    for admin_id in get_admins():
+    # Уведомим админов групп пользователя и суперадминов
+    admin_ids = set(get_admins())
+    for gid, _name, _role in get_user_groups(user_id):
+        admin_ids.update(get_group_admins(gid))
+    for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Одобрить", callback_data=f"approve_abs:{abs_id}"),
@@ -1675,16 +1744,10 @@ async def process_comment(message: types.Message, state: FSMContext):
         except:
             pass
 
-    if is_user_admin(message.from_user.id):
-        await message.answer(
-            "Отсутствие успешно добавлено! Возвращаю вас в админ-меню.",
-            reply_markup=admin_menu
-        )
-    else:
-        await message.answer(
-            "Отсутствие успешно добавлено! Возвращаю вас в пользовательское меню.",
-            reply_markup=user_menu
-        )
+    await message.answer(
+        "Отсутствие успешно добавлено! Возвращаю вас в меню.",
+        reply_markup=get_role_menu(message.from_user.id)
+    )
 
     await state.clear()
 
@@ -1958,8 +2021,11 @@ async def request_delete_absence(cb: CallbackQuery):
         await cb.answer("Удалять можно только 'approved'.", show_alert=True)
         return
 
-    # Отправим запрос админам
-    for admin_id in get_admins():
+    # Отправим запрос админам групп пользователя и суперадминам
+    admin_ids = set(get_admins())
+    for gid, _name, _role in get_user_groups(user_id):
+        admin_ids.update(get_group_admins(gid))
+    for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Одобрить удаление", callback_data=f"approve_del:{abs_id}"),
@@ -2130,12 +2196,15 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         f"(Старое и новое видно админу)."
     )
 
-    # 6) Шлём админам
+    # 6) Шлём админам групп пользователя и суперадминам
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
         InlineKeyboardButton(text="Отклонить", callback_data=f"decline_edit:{req_id}")
     ]])
-    for admin_id in get_admins():
+    admin_ids = set(get_admins())
+    for gid, _name, _role in get_user_groups(user_id):
+        admin_ids.update(get_group_admins(gid))
+    for admin_id in admin_ids:
         try:
             await bot.send_message(admin_id, text_admin, reply_markup=kb)
         except:
@@ -2148,8 +2217,13 @@ async def edit_approval_callback(cb: CallbackQuery):
     """
     Хендлер для админа: approve_edit:<req_id> / decline_edit:<req_id>.
     """
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав админа!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     action, req_id_str = cb.data.split(":")
@@ -2166,6 +2240,10 @@ async def edit_approval_callback(cb: CallbackQuery):
         return
 
     abs_id, new_cat, new_sd, new_ed, new_comment, user_id = row
+    if group_id and not user_in_group(user_id, group_id):
+        conn.close()
+        await cb.answer("Нет прав!", show_alert=True)
+        return
 
     # Считываем старые поля (если хотите показать «старое → новое» админу)
     cur.execute("""
@@ -2240,8 +2318,13 @@ async def edit_approval_callback(cb: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("approve_del:") or c.data.startswith("decline_del:"))
 async def confirm_delete_absence(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     action, abs_id_str = cb.data.split(":")
@@ -2262,12 +2345,16 @@ async def confirm_delete_absence(cb: CallbackQuery):
         return
 
     user_id, cat, sd, ed = row
+    if group_id and not user_in_group(user_id, group_id):
+        conn.close()
+        await cb.answer("Нет прав!", show_alert=True)
+        return
     if action == "approve_del":
         cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
         conn.commit()
         conn.close()
         await cb.message.answer(f"Удаление #{abs_id} одобрено. Запись удалена.")
-        log_action(cb.from_user.id, f"approve_del absence {abs_id}")
+        log_action(admin_id, f"approve_del absence {abs_id}")
         try:
             await bot.send_message(user_id, f"Админ удалил вашу заявку #{abs_id}.")
         except:
@@ -2288,8 +2375,13 @@ async def confirm_delete_absence(cb: CallbackQuery):
 ###############################################################################
 @dp.message(lambda msg: msg.text == "Заявки на отсутствие")
 async def show_absence_requests(message: types.Message):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
         return
 
     # Cancel KB
@@ -2305,13 +2397,21 @@ async def show_absence_requests(message: types.Message):
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("""
-        SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
-        FROM absences a
-        JOIN users u ON a.user_id=u.telegram_id
-        WHERE a.status='pending'
-        ORDER BY a.start_date
-    """)
+    if group_id:
+        cur.execute("""
+            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
+            FROM absences a
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='pending' AND gm.group_id=?
+            ORDER BY a.start_date
+        """, (group_id,))
+    else:
+        cur.execute("""
+            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
+            FROM absences a
+            WHERE a.status='pending'
+            ORDER BY a.start_date
+        """)
     rows = cur.fetchall()
     conn.close()
 
@@ -2339,8 +2439,13 @@ async def show_absence_requests(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith("approve_abs:") or c.data.startswith("decline_abs:"))
 async def callback_absence_approval(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     action, abs_id_str = cb.data.split(":")
@@ -2364,6 +2469,10 @@ async def callback_absence_approval(cb: CallbackQuery):
         await cb.answer("Эта заявка уже обработана.", show_alert=True)
         conn.close()
         return
+    if group_id and not user_in_group(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        conn.close()
+        return
 
     if action == "approve_abs":
         new_status = "approved"
@@ -2379,7 +2488,7 @@ async def callback_absence_approval(cb: CallbackQuery):
     conn.close()
 
     await cb.message.answer(txt_admin)
-    log_action(cb.from_user.id, f"{action} absence {abs_id}")
+    log_action(admin_id, f"{action} absence {abs_id}")
 
     try:
         await bot.send_message(user_id, txt_user)
@@ -2393,8 +2502,25 @@ async def callback_absence_approval(cb: CallbackQuery):
 ###############################################################################
 @dp.message(lambda msg: msg.text == "Посмотреть отсутствия сотрудника")
 async def select_user_for_absences(message: types.Message):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
+        return
+
+    if group_id:
+        members = get_group_members(group_id)
+        if not members:
+            await message.answer("В группе нет сотрудников.")
+            return
+        kb_rows = []
+        for (tid, fname, _username, _role) in members:
+            kb_rows.append([InlineKeyboardButton(text=fname, callback_data=f"show_abs:{tid}")])
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        await message.answer("Выберите сотрудника:", reply_markup=inline_kb)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2423,11 +2549,19 @@ async def select_user_for_absences(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith("show_abs:"))
 async def cb_show_absences(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
+    if group_id and not user_in_group(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        return
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("""
@@ -2458,8 +2592,16 @@ async def cb_show_absences(cb: CallbackQuery):
 ###############################################################################
 @dp.message(lambda msg: msg.text == "Удалить отсутствие сотрудника")
 async def admin_delete_absence_start(message: types.Message):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
+        return
+    if not group_id:
+        await message.answer("Для удаления отсутствия выберите рабочую группу (кнопка «Сменить группу»).")
         return
 
     # NEW
@@ -2472,23 +2614,13 @@ async def admin_delete_absence_start(message: types.Message):
         reply_markup=cancel_kb
     )
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_approved=1
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        await message.answer("Нет одобренных сотрудников.")
+    members = get_group_members(group_id)
+    if not members:
+        await message.answer("В группе нет сотрудников.")
         return
 
     kb_rows = []
-    for (tid, fname) in rows:
+    for (tid, fname, _username, _role) in members:
         kb_rows.append([
             InlineKeyboardButton(text=fname, callback_data=f"adm_del_pickuser:{tid}")
         ])
@@ -2497,11 +2629,19 @@ async def admin_delete_absence_start(message: types.Message):
 
 @dp.callback_query(lambda c: c.data.startswith("adm_del_pickuser:"))
 async def admin_delete_absences_pickuser(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select or not group_id:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
+    if not user_in_group(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        return
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("""
@@ -2535,8 +2675,13 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("adm_del_abs:"))
 async def admin_delete_absence_final(cb: CallbackQuery):
-    if not is_user_admin(cb.from_user.id):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
         await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select or not group_id:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
         return
 
     abs_id = int(cb.data.split(":")[1])
@@ -2551,6 +2696,10 @@ async def admin_delete_absence_final(cb: CallbackQuery):
         return
 
     user_id, cat, sd, ed = row
+    if group_id and not user_in_group(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        conn.close()
+        return
     cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
     conn.commit()
     conn.close()
@@ -2574,11 +2723,17 @@ class CsvExportFSM(StatesGroup):
 
 @dp.message(lambda msg: msg.text == "Выгрузить отсутствия (CSV)")
 async def start_csv_export(message: types.Message, state: FSMContext):
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
         return
 
     await state.clear()  # optional if you want to ensure no leftover states
+    await state.update_data(group_id=group_id)
 
     # NEW: create "Cancel" reply keyboard
     cancel_kb = ReplyKeyboardMarkup(
@@ -2597,10 +2752,10 @@ async def start_csv_export(message: types.Message, state: FSMContext):
 async def csv_export_start_date(message: types.Message, state: FSMContext):
     if message.text == "Отмена":
         await state.clear()
-        if is_user_admin(message.from_user.id):
-            await message.answer("Операция отменена. Возвращаю вас в меню администратора.", reply_markup=admin_menu)
-        else:
-            await message.answer("Операция отменена. Возвращаю вас в меню пользователя.", reply_markup=user_menu)
+        await message.answer(
+            "Операция отменена. Возвращаю вас в меню.",
+            reply_markup=get_role_menu(message.from_user.id)
+        )
         return
 
     text = message.text.strip()
@@ -2618,10 +2773,10 @@ async def csv_export_start_date(message: types.Message, state: FSMContext):
 async def csv_export_end_date(message: types.Message, state: FSMContext):
     if message.text == "Отмена":
         await state.clear()
-        if is_user_admin(message.from_user.id):
-            await message.answer("Операция отменена. Возвращаю вас в меню администратора.", reply_markup=admin_menu)
-        else:
-            await message.answer("Операция отменена. Возвращаю вас в меню пользователя.", reply_markup=user_menu)
+        await message.answer(
+            "Операция отменена. Возвращаю вас в меню.",
+            reply_markup=get_role_menu(message.from_user.id)
+        )
         return
 
     text = message.text.strip()
@@ -2633,6 +2788,7 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
     start_date_str = data["start_date"]
+    group_id = data.get("group_id")
     start_date_obj = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
 
     if end_date_obj < start_date_obj:
@@ -2647,16 +2803,30 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     # Выбираем approved-отсутствия, пересекающие [sds; eds]
-    cur.execute("""
-        SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
-               u.fullname, u.username
-        FROM absences a
-        JOIN users u ON a.user_id = u.telegram_id
-        WHERE a.status='approved'
-          AND date(a.start_date) <= date(?)
-          AND date(a.end_date) >= date(?)
-        ORDER BY a.start_date
-    """, (eds, sds))
+    if group_id:
+        cur.execute("""
+            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
+                   u.fullname, u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='approved'
+              AND gm.group_id=?
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+        """, (group_id, eds, sds))
+    else:
+        cur.execute("""
+            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
+                   u.fullname, u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            WHERE a.status='approved'
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+        """, (eds, sds))
     rows = cur.fetchall()
     conn.close()
 
@@ -2709,8 +2879,13 @@ async def show_absences_today(message: types.Message):
     """
     Показываем список одобренных отсутствий, которые пересекаются с 'сегодня'.
     """
-    if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
         return
 
     # 'today_display' вместо 'today_str', в формате дд.мм.гггг
@@ -2727,21 +2902,40 @@ async def show_absences_today(message: types.Message):
     # start_date <= today <= end_date
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    cur.execute("""
-        SELECT a.user_id,
-               a.category,
-               a.start_date,
-               a.end_date,
-               a.comment,
-               u.fullname,
-               u.username
-        FROM absences a
-        JOIN users u ON a.user_id = u.telegram_id
-        WHERE a.status='approved'
-          AND date(a.start_date) <= date(:tod)
-          AND date(a.end_date) >= date(:tod)
-        ORDER BY a.start_date
-    """, {"tod": today_iso})
+    if group_id:
+        cur.execute("""
+            SELECT a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='approved'
+              AND gm.group_id=:gid
+              AND date(a.start_date) <= date(:tod)
+              AND date(a.end_date) >= date(:tod)
+            ORDER BY a.start_date
+        """, {"tod": today_iso, "gid": group_id})
+    else:
+        cur.execute("""
+            SELECT a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            WHERE a.status='approved'
+              AND date(a.start_date) <= date(:tod)
+              AND date(a.end_date) >= date(:tod)
+            ORDER BY a.start_date
+        """, {"tod": today_iso})
     rows = cur.fetchall()
     conn.close()
 
@@ -2983,8 +3177,11 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     # Теперь сохраняем user_id: это тот, кто ИНИЦИИРОВАЛ добавление
     user_id = message.from_user.id
 
-     # Уведомим админов
-    for admin_id in get_admins():
+    # Уведомим админов групп целевого пользователя и суперадминов
+    admin_ids = set(get_admins())
+    for gid, _name, _role in get_user_groups(target_user_id):
+        admin_ids.update(get_group_admins(gid))
+    for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Одобрить", callback_data=f"approve_abs:{abs_id}"),
