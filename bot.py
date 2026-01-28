@@ -176,6 +176,20 @@ def get_approved_users() -> list[tuple[int, str, str]]:
     conn.close()
     return rows
 
+def get_group_members(group_id: int) -> list[tuple[int, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT u.telegram_id, u.fullname, u.username, gm.role
+        FROM group_memberships gm
+        JOIN users u ON u.telegram_id = gm.user_id
+        WHERE gm.group_id=?
+        ORDER BY u.fullname
+    """, (group_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
 def get_user_fullname(tg_id: int) -> str:
     """
     Возвращает fullname + (@username), либо "User <id>", если записи нет.
@@ -227,6 +241,9 @@ admin_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="Добавить пользователя в группу")
         ],
         [
+            KeyboardButton(text="Удалить пользователя из группы")
+        ],
+        [
             KeyboardButton(text="Добавить отсутствие"),
             KeyboardButton(text="Удалить мои отсутствия")
         ],
@@ -252,6 +269,7 @@ user_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Добавить отсутствие")],
         [KeyboardButton(text="Мои отсутствия")],
+        [KeyboardButton(text="Мои группы")],
         [KeyboardButton(text="Добавить отсутствие другому сотруднику")]
     ],
     resize_keyboard=True
@@ -847,6 +865,111 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.clear()
 
+
+class GroupRemoveUserFSM(StatesGroup):
+    waiting_for_group = State()
+    waiting_for_user = State()
+
+
+@dp.message(lambda msg: msg.text == "Удалить пользователя из группы")
+async def remove_user_from_group_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer("Группы не найдены.")
+        return
+
+    await state.clear()
+    cancel_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True
+    )
+    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"grm_group:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Группа для удаления пользователя:", reply_markup=inline_kb)
+    await state.set_state(GroupRemoveUserFSM.waiting_for_group)
+
+
+@dp.callback_query(lambda c: c.data.startswith("grm_group:"), GroupRemoveUserFSM.waiting_for_group)
+async def remove_user_from_group_pick_group(cb: CallbackQuery, state: FSMContext):
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    await state.update_data(group_id=group_id)
+
+    members = get_group_members(group_id)
+    if not members:
+        await cb.message.answer("В группе нет пользователей.")
+        await cb.answer()
+        await state.clear()
+        return
+
+    kb_rows = []
+    for uid, fullname, username, role in members:
+        label = f"{fullname}"
+        if username:
+            label += f" (@{username})"
+        role_label = "админ" if role == "admin" else "участник"
+        label += f" [{role_label}]"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"grm_user:{uid}")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await cb.message.answer("Выберите пользователя для удаления из группы:", reply_markup=inline_kb)
+    await state.set_state(GroupRemoveUserFSM.waiting_for_user)
+    await cb.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith("grm_user:"), GroupRemoveUserFSM.waiting_for_user)
+async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+    if not group_id:
+        await cb.answer("Группа не выбрана.", show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        DELETE FROM group_memberships
+        WHERE user_id=? AND group_id=?
+    """, (user_id, group_id))
+    deleted = cur.rowcount > 0
+    cur.execute("""
+        UPDATE users
+        SET last_group_id=NULL
+        WHERE telegram_id=? AND last_group_id=?
+    """, (user_id, group_id))
+    conn.commit()
+    conn.close()
+
+    if not deleted:
+        await cb.message.answer("Пользователь не найден в группе.", reply_markup=admin_menu)
+        await cb.answer()
+        await state.clear()
+        return
+
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    await cb.message.answer(f"Пользователь удалён из группы {group_name}.", reply_markup=admin_menu)
+    await cb.answer()
+    await state.clear()
+
 ###############################################################################
 # Сменить рабочую группу (админ/суперадмин)
 ###############################################################################
@@ -1342,6 +1465,25 @@ async def show_my_absences(message: types.Message):
         inline_kb = None
 
     await message.answer(text_report, reply_markup=inline_kb)
+
+@dp.message(lambda msg: msg.text == "Мои группы")
+async def show_my_groups(message: types.Message):
+    user_id = message.from_user.id
+    if not user_exists_in_db(user_id):
+        await message.answer("Вы не зарегистрированы.")
+        return
+
+    groups = get_user_groups(user_id)
+    if not groups:
+        await message.answer("Вы пока не состоите ни в одной группе.")
+        return
+
+    lines = []
+    for gid, name, role in groups:
+        role_label = "админ" if role == "admin" else "участник"
+        lines.append(f"- {name} (ID={gid}, роль: {role_label})")
+
+    await message.answer("Ваши группы:\n" + "\n".join(lines))
 
 @dp.message(lambda msg: msg.text == "Удалить мои отсутствия")
 async def admin_delete_my_absences(message: types.Message):
