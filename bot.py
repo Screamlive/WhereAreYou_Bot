@@ -748,6 +748,14 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             """, (user_id, group_id))
             conn.commit()
             msg = "Роль пользователя обновлена на админа группы."
+            try:
+                group_name = get_group_name(group_id) or f"ID={group_id}"
+                await bot.send_message(
+                    user_id,
+                    f"Вам назначена роль администратора группы: {group_name}."
+                )
+            except:
+                pass
     else:
         cur.execute("""
             INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
@@ -755,6 +763,14 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
         """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
         conn.commit()
         msg = "Пользователь назначен админом группы."
+        try:
+            group_name = get_group_name(group_id) or f"ID={group_id}"
+            await bot.send_message(
+                user_id,
+                f"Вы добавлены в группу {group_name} как администратор."
+            )
+        except:
+            pass
 
     conn.close()
     await cb.message.answer(msg, reply_markup=admin_menu)
@@ -859,6 +875,14 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
         """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
         conn.commit()
         msg = "Пользователь добавлен в группу."
+        try:
+            group_name = get_group_name(group_id) or f"ID={group_id}"
+            await bot.send_message(
+                user_id,
+                f"Вы добавлены в группу {group_name}."
+            )
+        except:
+            pass
 
     conn.close()
     await cb.message.answer(msg, reply_markup=admin_menu)
@@ -967,6 +991,13 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
     await cb.message.answer(f"Пользователь удалён из группы {group_name}.", reply_markup=admin_menu)
+    try:
+        await bot.send_message(
+            user_id,
+            f"Вы удалены из группы {group_name}."
+        )
+    except:
+        pass
     await cb.answer()
     await state.clear()
 
