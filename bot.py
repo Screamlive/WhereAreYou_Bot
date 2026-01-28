@@ -73,10 +73,57 @@ def is_user_admin(tg_id: int) -> bool:
     conn.close()
     return (row is not None) and (row[0] == 1)
 
+def is_superadmin(tg_id: int) -> bool:
+    """
+    Глобальная роль. Сейчас совпадает с is_admin (переиспользуем колонку).
+    """
+    return is_user_admin(tg_id)
+
 def get_admins() -> list[int]:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
     cur.execute("SELECT telegram_id FROM users WHERE is_admin=1")
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def get_user_groups(tg_id: int) -> list[tuple[int, str, str]]:
+    """
+    Возвращает список групп пользователя: (group_id, group_name, role).
+    """
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT gm.group_id, g.name, gm.role
+        FROM group_memberships gm
+        JOIN groups g ON g.id = gm.group_id
+        WHERE gm.user_id=?
+        ORDER BY g.name
+    """, (tg_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+def is_group_admin(tg_id: int, group_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT 1
+        FROM group_memberships
+        WHERE user_id=? AND group_id=? AND role='admin'
+    """, (tg_id, group_id))
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+def get_group_admins(group_id: int) -> list[int]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT user_id
+        FROM group_memberships
+        WHERE group_id=? AND role='admin'
+    """, (group_id,))
     rows = cur.fetchall()
     conn.close()
     return [r[0] for r in rows]
