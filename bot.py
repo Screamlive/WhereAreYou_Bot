@@ -242,6 +242,18 @@ def get_group_members(group_id: int) -> list[tuple[int, str, str, str]]:
     conn.close()
     return rows
 
+def get_all_users() -> list[tuple[int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT telegram_id, fullname, username
+        FROM users
+        ORDER BY fullname
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
 def get_user_fullname(tg_id: int) -> str:
     """
     Возвращает fullname + (@username), либо "User <id>", если записи нет.
@@ -274,6 +286,13 @@ admin_menu = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="Список запросов"),
             KeyboardButton(text="Список сотрудников")
+        ],
+        [
+            KeyboardButton(text="Текущая группа")
+        ],
+        [
+            KeyboardButton(text="Изменить имя пользователя"),
+            KeyboardButton(text="Показать @username")
         ],
         [
             KeyboardButton(text="Заявки в группу")
@@ -340,6 +359,9 @@ group_admin_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="Список сотрудников")
         ],
         [
+            KeyboardButton(text="Текущая группа")
+        ],
+        [
             KeyboardButton(text="Заявки на отсутствие"),
             KeyboardButton(text="Выгрузить отсутствия (CSV)")
         ],
@@ -368,6 +390,9 @@ group_admin_menu_single = ReplyKeyboardMarkup(
         [
             KeyboardButton(text="Заявки в группу"),
             KeyboardButton(text="Список сотрудников")
+        ],
+        [
+            KeyboardButton(text="Текущая группа")
         ],
         [
             KeyboardButton(text="Заявки на отсутствие"),
@@ -426,6 +451,31 @@ def get_role_menu(tg_id: int) -> ReplyKeyboardMarkup:
             return group_admin_menu
         return group_admin_select_menu
     return user_menu
+
+
+@dp.message(lambda msg: msg.text == "Текущая группа")
+async def show_current_group(message: types.Message):
+    user_id = message.from_user.id
+    if is_superadmin(user_id):
+        group_id = get_last_group_id(user_id)
+        if group_id:
+            name = get_group_name(group_id) or f"ID={group_id}"
+            await message.answer(f"Текущая группа: {name}")
+        else:
+            await message.answer("Текущая группа: глобально")
+        return
+
+    if not user_is_group_admin_any(user_id):
+        await message.answer("У вас нет прав администратора группы.")
+        return
+
+    group_id = get_last_group_id(user_id)
+    if not group_id:
+        await message.answer("Группа не выбрана. Нажмите «Сменить группу».")
+        return
+
+    name = get_group_name(group_id) or f"ID={group_id}"
+    await message.answer(f"Текущая группа: {name}")
 
 ###############################################################################
 # /start
@@ -496,7 +546,7 @@ async def cmd_start(message: types.Message):
         )
         return
 
-    await message.answer("Добро пожаловать, Пользователь!", reply_markup=user_menu)
+    await message.answer("Добро пожаловать, Пользователь!", reply_markup=get_role_menu(tg_id))
 
 ###############################################################################
 # FSM для запроса ФИО при регистрации
@@ -549,13 +599,13 @@ async def process_fullname(message: types.Message, state: FSMContext):
     await message.answer("Спасибо! Ваша заявка отправлена администратору.")
     if is_user_admin(message.from_user.id):
         await message.answer(
-            "Отсутствие успешно добавлено! Возвращаю вас в админ-меню.",
-            reply_markup=admin_menu
+            "Отсутствие успешно добавлено! Возвращаю вас в меню.",
+            reply_markup=get_role_menu(message.from_user.id)
         )
     else:
         await message.answer(
-            "Отсутствие успешно добавлено! Возвращаю вас в пользовательское меню.",
-            reply_markup=user_menu
+            "Отсутствие успешно добавлено! Возвращаю вас в меню.",
+            reply_markup=get_role_menu(message.from_user.id)
         )
 
     await state.clear()
@@ -627,9 +677,9 @@ async def inline_approve_user(cb: CallbackQuery):
 
         try:
             if is_user_admin(user_id):
-                await bot.send_message(user_id, "Ваш запрос одобрен (админ-меню)!", reply_markup=admin_menu)
+                await bot.send_message(user_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(user_id))
             else:
-                await bot.send_message(user_id, "Ваш запрос одобрен!", reply_markup=user_menu)
+                await bot.send_message(user_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(user_id))
         except:
             pass
 
@@ -692,9 +742,9 @@ async def cmd_approve(message: types.Message):
     log_action(message.from_user.id, f"approve {target_id}")
     try:
         if is_user_admin(target_id):
-            await bot.send_message(target_id, "Ваш запрос одобрен (админ)!", reply_markup=admin_menu)
+            await bot.send_message(target_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(target_id))
         else:
-            await bot.send_message(target_id, "Ваш запрос одобрен!", reply_markup=user_menu)
+            await bot.send_message(target_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(target_id))
     except:
         pass
 
@@ -843,9 +893,9 @@ async def create_group_finish(message: types.Message, state: FSMContext):
             VALUES (?, ?, ?)
         """, (name, datetime.datetime.now().isoformat(), message.from_user.id))
         conn.commit()
-        await message.answer(f"Группа создана: {name}", reply_markup=admin_menu)
+        await message.answer(f"Группа создана: {name}", reply_markup=get_role_menu(message.from_user.id))
     except sqlite3.IntegrityError:
-        await message.answer("Такая группа уже существует.", reply_markup=admin_menu)
+        await message.answer("Такая группа уже существует.", reply_markup=get_role_menu(message.from_user.id))
     finally:
         conn.close()
 
@@ -865,6 +915,139 @@ async def list_groups(message: types.Message):
 
     text = "Группы:\n" + "\n".join([f"- {name} (ID={gid})" for gid, name in groups])
     await message.answer(text)
+
+###############################################################################
+# Суперадмин: изменить имя пользователя / показать @username
+###############################################################################
+class SuperadminChangeNameFSM(StatesGroup):
+    waiting_for_user = State()
+    waiting_for_fullname = State()
+
+
+class SuperadminShowUsernameFSM(StatesGroup):
+    waiting_for_user = State()
+
+
+@dp.message(lambda msg: msg.text == "Изменить имя пользователя")
+async def superadmin_change_name_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    users = get_all_users()
+    if not users:
+        await message.answer("Пользователи не найдены.")
+        return
+
+    await state.clear()
+    kb_rows = []
+    for uid, fullname, username in users:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"sa_name_user:{uid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await state.set_state(SuperadminChangeNameFSM.waiting_for_user)
+
+
+@dp.callback_query(lambda c: c.data.startswith("sa_name_user:"), SuperadminChangeNameFSM.waiting_for_user)
+async def superadmin_change_name_pick_user(cb: CallbackQuery, state: FSMContext):
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    await state.update_data(user_id=user_id)
+    await cb.message.answer("Введите новое имя (ФИО):")
+    await state.set_state(SuperadminChangeNameFSM.waiting_for_fullname)
+    await cb.answer()
+
+
+@dp.message(SuperadminChangeNameFSM.waiting_for_fullname)
+async def superadmin_change_name_finish(message: types.Message, state: FSMContext):
+    new_name = message.text.strip()
+    if not new_name:
+        await message.answer("Пустое значение. Попробуйте снова.")
+        return
+
+    data = await state.get_data()
+    user_id = data.get("user_id")
+    if not user_id:
+        await message.answer("Пользователь не выбран.")
+        await state.clear()
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET fullname=? WHERE telegram_id=?", (new_name, user_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+
+    if not updated:
+        await message.answer("Пользователь не найден.")
+        await state.clear()
+        return
+
+    await message.answer(f"Имя пользователя обновлено: {new_name}", reply_markup=get_role_menu(message.from_user.id))
+    try:
+        await bot.send_message(user_id, f"Ваше имя обновлено суперадминистратором: {new_name}")
+    except:
+        pass
+    log_action(message.from_user.id, f"superadmin_change_name {user_id}")
+    await state.clear()
+
+
+@dp.message(lambda msg: msg.text == "Показать @username")
+async def superadmin_show_username_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    users = get_all_users()
+    if not users:
+        await message.answer("Пользователи не найдены.")
+        return
+
+    await state.clear()
+    kb_rows = []
+    for uid, fullname, username in users:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"sa_uname_user:{uid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await state.set_state(SuperadminShowUsernameFSM.waiting_for_user)
+
+
+@dp.callback_query(lambda c: c.data.startswith("sa_uname_user:"), SuperadminShowUsernameFSM.waiting_for_user)
+async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContext):
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT fullname, username FROM users WHERE telegram_id=?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        await cb.answer("Пользователь не найден.", show_alert=True)
+        await state.clear()
+        return
+
+    fullname, username = row
+    uname = f"@{username}" if username else "не указан"
+    label = fullname or f"User {user_id}"
+    await cb.message.answer(f"{label}: {uname}")
+    await cb.answer()
+    await state.clear()
 
 
 class GroupAdminAssignFSM(StatesGroup):
@@ -998,7 +1181,7 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             pass
 
     conn.close()
-    await cb.message.answer(msg, reply_markup=admin_menu)
+    await cb.message.answer(msg, reply_markup=get_role_menu(cb.from_user.id))
     await cb.answer()
     await state.clear()
 
@@ -1115,7 +1298,7 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
             pass
 
     conn.close()
-    await cb.message.answer(msg, reply_markup=admin_menu)
+    await cb.message.answer(msg, reply_markup=get_role_menu(cb.from_user.id))
     await cb.answer()
     await state.clear()
 
@@ -1214,13 +1397,13 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
     conn.close()
 
     if not deleted:
-        await cb.message.answer("Пользователь не найден в группе.", reply_markup=admin_menu)
+        await cb.message.answer("Пользователь не найден в группе.", reply_markup=get_role_menu(cb.from_user.id))
         await cb.answer()
         await state.clear()
         return
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
-    await cb.message.answer(f"Пользователь удалён из группы {group_name}.", reply_markup=admin_menu)
+    await cb.message.answer(f"Пользователь удалён из группы {group_name}.", reply_markup=get_role_menu(cb.from_user.id))
     try:
         await bot.send_message(
             user_id,
@@ -1542,7 +1725,7 @@ async def callback_make_admin_user(cb: CallbackQuery):
 
     # Уведомим
     try:
-        await bot.send_message(user_id, "Вам назначены права администратора!", reply_markup=admin_menu)
+        await bot.send_message(user_id, "Вам назначены права администратора!", reply_markup=get_role_menu(user_id))
     except:
         pass
 
@@ -3247,7 +3430,7 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     log_action(message.from_user.id, f"Export CSV {sds}-{eds}")
     await message.answer(
         "Выгрузка завершена! Возвращаю вас в админ-меню.",
-        reply_markup=admin_menu
+        reply_markup=get_role_menu(message.from_user.id)
     )
 
     await state.clear()
@@ -3452,7 +3635,7 @@ async def pick_user_for_abs(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AddAbsenceForAnotherFSM.waiting_for_category)
     await cb.message.answer(
         "Возвращаю вас в админ-меню.",
-        reply_markup=admin_menu
+        reply_markup=get_role_menu(message.from_user.id)
     )
     await cb.answer()
 
@@ -3474,7 +3657,7 @@ async def pick_category_for_another(cb: CallbackQuery, state: FSMContext):
     )
     await cb.message.answer(
         "Возвращаю вас в админ-меню.",
-        reply_markup=admin_menu
+        reply_markup=get_role_menu(message.from_user.id)
     )
     await cb.answer()
     await state.set_state(AddAbsenceForAnotherFSM.waiting_for_start_date)
