@@ -145,6 +145,9 @@ def user_has_any_group(tg_id: int) -> bool:
 def user_is_group_admin_any(tg_id: int) -> bool:
     return any(role == "admin" for _, _, role in get_user_groups(tg_id))
 
+def get_admin_groups(tg_id: int) -> list[tuple[int, str]]:
+    return [(gid, name) for gid, name, role in get_user_groups(tg_id) if role == "admin"]
+
 def user_in_group(tg_id: int, group_id: int) -> bool:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -174,9 +177,14 @@ def get_admin_scope(tg_id: int) -> tuple[bool, int | None, bool]:
     """
     if is_superadmin(tg_id):
         return True, get_last_group_id(tg_id), False
-    if not user_is_group_admin_any(tg_id):
+    admin_groups = get_admin_groups(tg_id)
+    if not admin_groups:
         return False, None, False
     group_id = get_last_group_id(tg_id)
+    if not group_id and len(admin_groups) == 1:
+        only_gid = admin_groups[0][0]
+        set_last_group_id(tg_id, only_gid)
+        group_id = only_gid
     if not group_id:
         return False, None, True
     if not is_group_admin(tg_id, group_id):
@@ -300,6 +308,7 @@ admin_menu = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="Удалить отсутствие сотрудника"),
+            KeyboardButton(text="Изменить отсутствие сотрудника"),
             KeyboardButton(text="Выгрузить отсутствия за сегодня")
         ],
         [
@@ -340,6 +349,7 @@ group_admin_menu = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="Удалить отсутствие сотрудника"),
+            KeyboardButton(text="Изменить отсутствие сотрудника"),
             KeyboardButton(text="Удалить сотрудника")
         ],
         [KeyboardButton(text="Добавить отсутствие")],
@@ -349,6 +359,44 @@ group_admin_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Выйти из группы")],
         [KeyboardButton(text="Добавить отсутствие другому сотруднику")],
         [KeyboardButton(text="Сменить группу")]
+    ],
+    resize_keyboard=True
+)
+
+group_admin_menu_single = ReplyKeyboardMarkup(
+    keyboard=[
+        [
+            KeyboardButton(text="Заявки в группу"),
+            KeyboardButton(text="Список сотрудников")
+        ],
+        [
+            KeyboardButton(text="Заявки на отсутствие"),
+            KeyboardButton(text="Выгрузить отсутствия (CSV)")
+        ],
+        [
+            KeyboardButton(text="Выгрузить отсутствия за сегодня"),
+            KeyboardButton(text="Посмотреть отсутствия сотрудника")
+        ],
+        [
+            KeyboardButton(text="Удалить отсутствие сотрудника"),
+            KeyboardButton(text="Изменить отсутствие сотрудника")
+        ],
+        [
+            KeyboardButton(text="Удалить сотрудника"),
+            KeyboardButton(text="Добавить отсутствие")
+        ],
+        [KeyboardButton(text="Мои отсутствия")],
+        [KeyboardButton(text="Мои группы")],
+        [KeyboardButton(text="Запроситься в группу")],
+        [KeyboardButton(text="Выйти из группы")],
+        [KeyboardButton(text="Добавить отсутствие другому сотруднику")]
+    ],
+    resize_keyboard=True
+)
+
+group_admin_select_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Выбрать группу")]
     ],
     resize_keyboard=True
 )
@@ -366,8 +414,17 @@ def get_role_menu(tg_id: int) -> ReplyKeyboardMarkup:
     groups = get_user_groups(tg_id)
     if not groups:
         return no_group_menu
-    if any(role == "admin" for _, _, role in groups):
-        return group_admin_menu
+    admin_groups = [(gid, name) for gid, name, role in groups if role == "admin"]
+    if admin_groups:
+        if len(admin_groups) == 1:
+            only_gid = admin_groups[0][0]
+            if get_last_group_id(tg_id) != only_gid:
+                set_last_group_id(tg_id, only_gid)
+            return group_admin_menu_single
+        # несколько групп: нужен выбор
+        if get_last_group_id(tg_id) in [gid for gid, _ in admin_groups]:
+            return group_admin_menu
+        return group_admin_select_menu
     return user_menu
 
 ###############################################################################
@@ -403,10 +460,43 @@ async def cmd_start(message: types.Message):
 
     if is_superadmin(tg_id):
         await message.answer("Здравствуйте, Суперадминистратор!", reply_markup=admin_menu)
-    elif user_is_group_admin_any(tg_id):
-        await message.answer("Здравствуйте, Администратор группы!", reply_markup=group_admin_menu)
-    else:
-        await message.answer("Добро пожаловать, Пользователь!", reply_markup=user_menu)
+        return
+
+    admin_groups = get_admin_groups(tg_id)
+    if admin_groups:
+        if len(admin_groups) == 1:
+            only_gid, only_name = admin_groups[0]
+            set_last_group_id(tg_id, only_gid)
+            await message.answer(
+                f"Здравствуйте, Администратор группы! Рабочая группа: {only_name}",
+                reply_markup=group_admin_menu_single
+            )
+            return
+
+        if get_last_group_id(tg_id):
+            gname = get_group_name(get_last_group_id(tg_id)) or "выбрана"
+            await message.answer(
+                f"Здравствуйте, Администратор группы! Рабочая группа: {gname}",
+                reply_markup=group_admin_menu
+            )
+            return
+
+        # несколько групп и нет выбранной — просим выбрать
+        kb_rows = []
+        for gid, name in admin_groups:
+            kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"set_group:{gid}")])
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        await message.answer(
+            "Здравствуйте, Администратор группы! Выберите рабочую группу:",
+            reply_markup=inline_kb
+        )
+        await message.answer(
+            "После выбора появится меню управления группой.",
+            reply_markup=group_admin_select_menu
+        )
+        return
+
+    await message.answer("Добро пожаловать, Пользователь!", reply_markup=user_menu)
 
 ###############################################################################
 # FSM для запроса ФИО при регистрации
@@ -879,6 +969,11 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
                     user_id,
                     f"Вам назначена роль администратора группы: {group_name}."
                 )
+                await bot.send_message(
+                    user_id,
+                    "Меню обновлено.",
+                    reply_markup=get_role_menu(user_id)
+                )
             except:
                 pass
     else:
@@ -893,6 +988,11 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             await bot.send_message(
                 user_id,
                 f"Вы добавлены в группу {group_name} как администратор."
+            )
+            await bot.send_message(
+                user_id,
+                "Меню обновлено.",
+                reply_markup=get_role_menu(user_id)
             )
         except:
             pass
@@ -1005,6 +1105,11 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
             await bot.send_message(
                 user_id,
                 f"Вы добавлены в группу {group_name}."
+            )
+            await bot.send_message(
+                user_id,
+                "Меню обновлено.",
+                reply_markup=get_role_menu(user_id)
             )
         except:
             pass
@@ -1119,7 +1224,8 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
     try:
         await bot.send_message(
             user_id,
-            f"Вы удалены из группы {group_name}."
+            f"Вы удалены из группы {group_name}.",
+            reply_markup=get_role_menu(user_id)
         )
     except:
         pass
@@ -1303,9 +1409,7 @@ async def handle_group_request(cb: CallbackQuery):
 async def change_work_group(message: types.Message):
     user_id = message.from_user.id
 
-    admin_groups = [
-        (gid, name) for (gid, name, role) in get_user_groups(user_id) if role == "admin"
-    ]
+    admin_groups = get_admin_groups(user_id)
 
     if not is_superadmin(user_id) and not admin_groups:
         await message.answer("Нет прав.")
@@ -1331,6 +1435,11 @@ async def change_work_group(message: types.Message):
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await message.answer("Выберите рабочую группу:", reply_markup=inline_kb)
+
+
+@dp.message(lambda msg: msg.text == "Выбрать группу")
+async def select_work_group_alias(message: types.Message):
+    await change_work_group(message)
 
 
 @dp.callback_query(lambda c: c.data.startswith("set_group:"))
@@ -1367,6 +1476,8 @@ async def set_work_group(cb: CallbackQuery):
         return
 
     await cb.message.answer(f"Рабочая группа установлена: {group_name}")
+    # Обновим меню после выбора группы
+    await cb.message.answer("Меню обновлено.", reply_markup=get_role_menu(user_id))
     await cb.answer()
 
 ###############################################################################
@@ -2713,6 +2824,277 @@ async def admin_delete_absence_final(cb: CallbackQuery):
         pass
 
     await cb.answer()
+
+###############################################################################
+# Изменить отсутствие сотрудника (админ)
+###############################################################################
+class AdminEditAbsenceFSM(StatesGroup):
+    waiting_for_user = State()
+    waiting_for_absence = State()
+    waiting_for_category = State()
+    waiting_for_start_date = State()
+    waiting_for_end_date = State()
+    waiting_for_comment = State()
+
+
+@dp.message(lambda msg: msg.text == "Изменить отсутствие сотрудника")
+async def admin_edit_absence_start(message: types.Message, state: FSMContext):
+    tg_id = message.from_user.id
+    allowed, group_id, need_select = get_admin_scope(tg_id)
+    if not allowed:
+        if need_select:
+            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        else:
+            await message.answer("Нет прав админа.")
+        return
+
+    await state.clear()
+    await state.update_data(group_id=group_id)
+
+    cancel_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True
+    )
+    await message.answer(
+        "Сейчас вы редактируете отсутствие сотрудника.\n"
+        "Если передумали, нажмите «Отмена».",
+        reply_markup=cancel_kb
+    )
+
+    if group_id:
+        members = get_group_members(group_id)
+        if not members:
+            await message.answer("В группе нет сотрудников.")
+            return
+        kb_rows = []
+        for (tid, fname, _username, _role) in members:
+            kb_rows.append([InlineKeyboardButton(text=fname, callback_data=f"adm_edit_user:{tid}")])
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        await message.answer("Выберите сотрудника:", reply_markup=inline_kb)
+        await state.set_state(AdminEditAbsenceFSM.waiting_for_user)
+        return
+
+    # Глобально (суперадмин)
+    users = get_approved_users()
+    if not users:
+        await message.answer("Нет одобренных сотрудников.")
+        return
+
+    kb_rows = []
+    for uid, fullname, username in users:
+        label = fullname
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_user:{uid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите сотрудника:", reply_markup=inline_kb)
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_user)
+
+
+@dp.callback_query(lambda c: c.data.startswith("adm_edit_user:"), AdminEditAbsenceFSM.waiting_for_user)
+async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    if group_id and not user_in_group(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, category, start_date, end_date, comment, status
+        FROM absences
+        WHERE user_id=?
+        ORDER BY start_date
+    """, (user_id,))
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await cb.message.answer("У сотрудника нет заявок.")
+        await cb.answer()
+        await state.clear()
+        return
+
+    await state.update_data(target_user_id=user_id)
+    kb_rows = []
+    for abs_id, cat, sd, ed, cmnt, st in rows:
+        label = f"#{abs_id} {cat} {sd}–{ed} [{st}]"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_abs:{abs_id}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await cb.message.answer("Выберите заявку для изменения:", reply_markup=inline_kb)
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_absence)
+    await cb.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith("adm_edit_abs:"), AdminEditAbsenceFSM.waiting_for_absence)
+async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
+    admin_id = cb.from_user.id
+    allowed, group_id, need_select = get_admin_scope(admin_id)
+    if not allowed:
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+    if need_select:
+        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        return
+
+    try:
+        abs_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная заявка.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT user_id, category, start_date, end_date, comment, status
+        FROM absences
+        WHERE id=?
+    """, (abs_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        await cb.answer("Заявка не найдена.", show_alert=True)
+        return
+
+    target_user_id, cat, sd, ed, cmnt, st = row
+    if group_id and not user_in_group(target_user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+
+    await state.update_data(abs_id=abs_id, target_user_id=target_user_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Отпуск", callback_data="adm_edit_cat_vacation"),
+            InlineKeyboardButton(text="Больничный", callback_data="adm_edit_cat_sick"),
+        ],
+        [
+            InlineKeyboardButton(text="DayOff", callback_data="adm_edit_cat_dayoff"),
+            InlineKeyboardButton(text="Другое", callback_data="adm_edit_cat_other"),
+        ]
+    ])
+    await cb.message.answer(
+        f"Текущие данные: {cat} {sd}–{ed}, коммент: {cmnt or '—'}, статус={st}\n"
+        f"Выберите новую категорию (можно выбрать ту же):",
+        reply_markup=kb
+    )
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_category)
+    await cb.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith("adm_edit_cat_"), AdminEditAbsenceFSM.waiting_for_category)
+async def admin_edit_absence_category(cb: CallbackQuery, state: FSMContext):
+    new_cat = cb.data.split("adm_edit_cat_")[1]
+    await state.update_data(new_cat=new_cat)
+    await cb.message.answer("Введите новую дату начала (дд.мм.гггг):")
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_start_date)
+    await cb.answer()
+
+
+@dp.message(AdminEditAbsenceFSM.waiting_for_start_date)
+async def admin_edit_absence_start_date(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    try:
+        date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
+    except ValueError:
+        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        return
+
+    await state.update_data(new_start_date=str(date_obj))
+    await message.answer("Введите новую дату окончания (дд.мм.гггг):")
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_end_date)
+
+
+@dp.message(AdminEditAbsenceFSM.waiting_for_end_date)
+async def admin_edit_absence_end_date(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    try:
+        date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
+    except ValueError:
+        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        return
+
+    data = await state.get_data()
+    start_str = data["new_start_date"]
+    start_date_obj = datetime.datetime.strptime(start_str, "%Y-%m-%d").date()
+    if date_obj < start_date_obj:
+        await message.answer("Дата окончания не может быть раньше даты начала.")
+        return
+
+    await state.update_data(new_end_date=str(date_obj))
+    await message.answer("Введите новый комментарий (или '-' если без комментария):")
+    await state.set_state(AdminEditAbsenceFSM.waiting_for_comment)
+
+
+@dp.message(AdminEditAbsenceFSM.waiting_for_comment)
+async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
+    comment = message.text.strip()
+    if comment == "-":
+        comment = ""
+
+    data = await state.get_data()
+    abs_id = data["abs_id"]
+    new_cat = data["new_cat"]
+    new_sd = data["new_start_date"]
+    new_ed = data["new_end_date"]
+    target_user_id = data["target_user_id"]
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT category, start_date, end_date, comment, status
+        FROM absences
+        WHERE id=?
+    """, (abs_id,))
+    old_row = cur.fetchone()
+    if not old_row:
+        conn.close()
+        await message.answer("Исходная заявка не найдена.")
+        await state.clear()
+        return
+
+    old_cat, old_sd, old_ed, old_cmnt, old_status = old_row
+    cur.execute("""
+        UPDATE absences
+        SET category=?, start_date=?, end_date=?, comment=?
+        WHERE id=?
+    """, (new_cat, new_sd, new_ed, comment, abs_id))
+    conn.commit()
+    conn.close()
+
+    await message.answer(
+        f"Заявка #{abs_id} обновлена.\n"
+        f"Было: {old_cat} {old_sd}–{old_ed}, {old_cmnt or '—'}\n"
+        f"Стало: {new_cat} {new_sd}–{new_ed}, {comment or '—'}"
+    )
+
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"Администратор изменил вашу заявку #{abs_id}.\n"
+            f"Теперь: {new_cat} {new_sd}–{new_ed}, {comment or '—'}"
+        )
+    except:
+        pass
+
+    log_action(message.from_user.id, f"admin_edit_absence {abs_id}")
+    await message.answer("Возвращаю вас в меню.", reply_markup=get_role_menu(message.from_user.id))
+    await state.clear()
 
 ###############################################################################
 # ВЫГРУЗКА CSV ЗА ПЕРИОД
