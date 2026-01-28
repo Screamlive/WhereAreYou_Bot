@@ -87,6 +87,41 @@ def get_admins() -> list[int]:
     conn.close()
     return [r[0] for r in rows]
 
+def get_last_group_id(tg_id: int) -> int | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT last_group_id FROM users WHERE telegram_id=?", (tg_id,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return row[0]
+
+def set_last_group_id(tg_id: int, group_id: int | None) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET last_group_id=? WHERE telegram_id=?", (group_id, tg_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+def list_all_groups() -> list[tuple[int, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT id, name FROM groups ORDER BY name")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+def get_group_name(group_id: int) -> str | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM groups WHERE id=?", (group_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
 def get_user_groups(tg_id: int) -> list[tuple[int, str, str]]:
     """
     Возвращает список групп пользователя: (group_id, group_name, role).
@@ -184,6 +219,9 @@ admin_menu = ReplyKeyboardMarkup(
         ],
         [
             KeyboardButton(text="Добавить отсутствие другому сотруднику") 
+        ],
+        [
+            KeyboardButton(text="Сменить группу")
         ]
     ],
     resize_keyboard=True
@@ -513,6 +551,79 @@ async def list_approved_users(message: types.Message):
     for (tid, fname) in rows:
      text_list += f"- {fname} (ID={tid})\n"
     await message.answer(text_list)
+
+###############################################################################
+# Сменить рабочую группу (админ/суперадмин)
+###############################################################################
+@dp.message(lambda msg: msg.text == "Сменить группу")
+async def change_work_group(message: types.Message):
+    user_id = message.from_user.id
+
+    admin_groups = [
+        (gid, name) for (gid, name, role) in get_user_groups(user_id) if role == "admin"
+    ]
+
+    if not is_superadmin(user_id) and not admin_groups:
+        await message.answer("Нет прав.")
+        return
+
+    if is_superadmin(user_id):
+        groups = list_all_groups()
+        allow_global = True
+    else:
+        groups = [(gid, name) for (gid, name) in admin_groups]
+        allow_global = False
+
+    if not groups and not allow_global:
+        await message.answer("Группы не найдены.")
+        return
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"set_group:{gid}")])
+
+    if allow_global:
+        kb_rows.append([InlineKeyboardButton(text="Глобально", callback_data="set_group:global")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите рабочую группу:", reply_markup=inline_kb)
+
+
+@dp.callback_query(lambda c: c.data.startswith("set_group:"))
+async def set_work_group(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    payload = cb.data.split(":", 1)[1]
+
+    if payload == "global":
+        if not is_superadmin(user_id):
+            await cb.answer("Нет прав!", show_alert=True)
+            return
+        set_last_group_id(user_id, None)
+        await cb.message.answer("Рабочая группа сброшена. Режим: глобально.")
+        await cb.answer()
+        return
+
+    try:
+        group_id = int(payload)
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
+        await cb.answer("Нет прав!", show_alert=True)
+        return
+
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer("Группа не найдена.", show_alert=True)
+        return
+
+    if not set_last_group_id(user_id, group_id):
+        await cb.answer("Пользователь не найден.", show_alert=True)
+        return
+
+    await cb.message.answer(f"Рабочая группа установлена: {group_name}")
+    await cb.answer()
 
 ###############################################################################
 # Назначить админом /make_admin, Отозвать админа /revoke_admin, Список админов
