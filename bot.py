@@ -163,6 +163,19 @@ def get_group_admins(group_id: int) -> list[int]:
     conn.close()
     return [r[0] for r in rows]
 
+def get_approved_users() -> list[tuple[int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT telegram_id, fullname, username
+        FROM users
+        WHERE is_approved=1
+        ORDER BY fullname
+    """)
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
 def get_user_fullname(tg_id: int) -> str:
     """
     Возвращает fullname + (@username), либо "User <id>", если записи нет.
@@ -204,6 +217,14 @@ admin_menu = ReplyKeyboardMarkup(
             KeyboardButton(text="Назначить админом"),
             KeyboardButton(text="Список админов"),
             KeyboardButton(text="Отозвать админа")
+        ],
+        [
+            KeyboardButton(text="Создать группу"),
+            KeyboardButton(text="Список групп")
+        ],
+        [
+            KeyboardButton(text="Назначить админа группы"),
+            KeyboardButton(text="Добавить пользователя в группу")
         ],
         [
             KeyboardButton(text="Добавить отсутствие"),
@@ -551,6 +572,280 @@ async def list_approved_users(message: types.Message):
     for (tid, fname) in rows:
      text_list += f"- {fname} (ID={tid})\n"
     await message.answer(text_list)
+
+###############################################################################
+# Группы (суперадмин)
+###############################################################################
+class GroupCreateFSM(StatesGroup):
+    waiting_for_name = State()
+
+
+@dp.message(lambda msg: msg.text == "Создать группу")
+async def create_group_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    await state.clear()
+    cancel_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True
+    )
+    await message.answer("Введите название группы:", reply_markup=cancel_kb)
+    await state.set_state(GroupCreateFSM.waiting_for_name)
+
+
+@dp.message(GroupCreateFSM.waiting_for_name)
+async def create_group_finish(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("Пустое название. Попробуйте снова.")
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO groups (name, created_at, created_by)
+            VALUES (?, ?, ?)
+        """, (name, datetime.datetime.now().isoformat(), message.from_user.id))
+        conn.commit()
+        await message.answer(f"Группа создана: {name}", reply_markup=admin_menu)
+    except sqlite3.IntegrityError:
+        await message.answer("Такая группа уже существует.", reply_markup=admin_menu)
+    finally:
+        conn.close()
+
+    await state.clear()
+
+
+@dp.message(lambda msg: msg.text == "Список групп")
+async def list_groups(message: types.Message):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer("Группы не найдены.")
+        return
+
+    text = "Группы:\n" + "\n".join([f"- {name} (ID={gid})" for gid, name in groups])
+    await message.answer(text)
+
+
+class GroupAdminAssignFSM(StatesGroup):
+    waiting_for_group = State()
+    waiting_for_user = State()
+
+
+@dp.message(lambda msg: msg.text == "Назначить админа группы")
+async def assign_group_admin_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer("Группы не найдены.")
+        return
+
+    await state.clear()
+    cancel_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True
+    )
+    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"ga_group:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Группа для назначения админа:", reply_markup=inline_kb)
+    await state.set_state(GroupAdminAssignFSM.waiting_for_group)
+
+
+@dp.callback_query(lambda c: c.data.startswith("ga_group:"), GroupAdminAssignFSM.waiting_for_group)
+async def assign_group_admin_pick_group(cb: CallbackQuery, state: FSMContext):
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    await state.update_data(group_id=group_id)
+
+    users = get_approved_users()
+    if not users:
+        await cb.message.answer("Нет одобренных пользователей.")
+        await cb.answer()
+        await state.clear()
+        return
+
+    kb_rows = []
+    for uid, fullname, username in users:
+        label = f"{fullname}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"ga_user:{uid}")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await cb.message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await state.set_state(GroupAdminAssignFSM.waiting_for_user)
+    await cb.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith("ga_user:"), GroupAdminAssignFSM.waiting_for_user)
+async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+    if not group_id:
+        await cb.answer("Группа не выбрана.", show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT role
+        FROM group_memberships
+        WHERE user_id=? AND group_id=?
+    """, (user_id, group_id))
+    row = cur.fetchone()
+
+    if row:
+        if row[0] == "admin":
+            msg = "Пользователь уже админ этой группы."
+        else:
+            cur.execute("""
+                UPDATE group_memberships
+                SET role='admin'
+                WHERE user_id=? AND group_id=?
+            """, (user_id, group_id))
+            conn.commit()
+            msg = "Роль пользователя обновлена на админа группы."
+    else:
+        cur.execute("""
+            INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
+            VALUES (?, ?, 'admin', ?, ?)
+        """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
+        conn.commit()
+        msg = "Пользователь назначен админом группы."
+
+    conn.close()
+    await cb.message.answer(msg, reply_markup=admin_menu)
+    await cb.answer()
+    await state.clear()
+
+
+class GroupAddUserFSM(StatesGroup):
+    waiting_for_group = State()
+    waiting_for_user = State()
+
+
+@dp.message(lambda msg: msg.text == "Добавить пользователя в группу")
+async def add_user_to_group_start(message: types.Message, state: FSMContext):
+    if not is_superadmin(message.from_user.id):
+        await message.answer("Нет прав.")
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer("Группы не найдены.")
+        return
+
+    await state.clear()
+    cancel_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True
+    )
+    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"gm_group:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Группа для добавления пользователя:", reply_markup=inline_kb)
+    await state.set_state(GroupAddUserFSM.waiting_for_group)
+
+
+@dp.callback_query(lambda c: c.data.startswith("gm_group:"), GroupAddUserFSM.waiting_for_group)
+async def add_user_to_group_pick_group(cb: CallbackQuery, state: FSMContext):
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    await state.update_data(group_id=group_id)
+
+    users = get_approved_users()
+    if not users:
+        await cb.message.answer("Нет одобренных пользователей.")
+        await cb.answer()
+        await state.clear()
+        return
+
+    kb_rows = []
+    for uid, fullname, username in users:
+        label = f"{fullname}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gm_user:{uid}")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await cb.message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await state.set_state(GroupAddUserFSM.waiting_for_user)
+    await cb.answer()
+
+
+@dp.callback_query(lambda c: c.data.startswith("gm_user:"), GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+    if not group_id:
+        await cb.answer("Группа не выбрана.", show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректный пользователь.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT role
+        FROM group_memberships
+        WHERE user_id=? AND group_id=?
+    """, (user_id, group_id))
+    row = cur.fetchone()
+
+    if row:
+        if row[0] == "admin":
+            msg = "Пользователь уже админ этой группы."
+        else:
+            msg = "Пользователь уже состоит в группе."
+    else:
+        cur.execute("""
+            INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
+            VALUES (?, ?, 'member', ?, ?)
+        """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
+        conn.commit()
+        msg = "Пользователь добавлен в группу."
+
+    conn.close()
+    await cb.message.answer(msg, reply_markup=admin_menu)
+    await cb.answer()
+    await state.clear()
 
 ###############################################################################
 # Сменить рабочую группу (админ/суперадмин)
