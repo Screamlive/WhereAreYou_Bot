@@ -302,6 +302,7 @@ user_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Мои отсутствия")],
         [KeyboardButton(text="Мои группы")],
         [KeyboardButton(text="Запроситься в группу")],
+        [KeyboardButton(text="Выйти из группы")],
         [KeyboardButton(text="Добавить отсутствие другому сотруднику")]
     ],
     resize_keyboard=True
@@ -314,6 +315,7 @@ group_admin_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Мои отсутствия")],
         [KeyboardButton(text="Мои группы")],
         [KeyboardButton(text="Запроситься в группу")],
+        [KeyboardButton(text="Выйти из группы")],
         [KeyboardButton(text="Добавить отсутствие другому сотруднику")],
         [KeyboardButton(text="Сменить группу")]
     ],
@@ -1190,6 +1192,11 @@ async def handle_group_request(cb: CallbackQuery):
                 DELETE FROM group_memberships
                 WHERE user_id=? AND group_id=?
             """, (req_user_id, group_id))
+            cur.execute("""
+                UPDATE users
+                SET last_group_id=NULL
+                WHERE telegram_id=? AND last_group_id=?
+            """, (req_user_id, group_id))
 
         cur.execute("""
             UPDATE group_requests
@@ -1205,6 +1212,11 @@ async def handle_group_request(cb: CallbackQuery):
                 req_user_id,
                 f"Ваш запрос на {('вступление в группу' if req_type == 'join' else 'выход из группы')} "
                 f"«{group_name}» одобрен."
+            )
+            await bot.send_message(
+                req_user_id,
+                "Ваше меню обновлено.",
+                reply_markup=get_role_menu(req_user_id)
             )
         except:
             pass
@@ -1823,6 +1835,84 @@ async def request_join_group(cb: CallbackQuery):
     ]])
     text_admin = (
         f"Запрос на вступление в группу «{group_name}»\n"
+        f"От: {get_user_fullname(user_id)}"
+    )
+    admin_ids = set(get_group_admins(group_id) + get_admins())
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+        except:
+            pass
+
+
+@dp.message(lambda msg: msg.text == "Выйти из группы")
+async def request_leave_group_start(message: types.Message):
+    user_id = message.from_user.id
+    if not user_exists_in_db(user_id):
+        await message.answer("Вы не зарегистрированы.")
+        return
+    if not is_user_approved(user_id):
+        await message.answer("Ваш аккаунт не одобрен.")
+        return
+
+    groups = get_user_groups(user_id)
+    if not groups:
+        await message.answer("Вы пока не состоите ни в одной группе.")
+        return
+
+    kb_rows = []
+    for gid, name, _role in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"leave_group:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите группу для выхода:", reply_markup=inline_kb)
+
+
+@dp.callback_query(lambda c: c.data.startswith("leave_group:"))
+async def request_leave_group(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    if not is_user_approved(user_id):
+        await cb.answer("Ваш аккаунт не одобрен.", show_alert=True)
+        return
+
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer("Некорректная группа.", show_alert=True)
+        return
+
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer("Группа не найдена.", show_alert=True)
+        return
+
+    if not user_in_group(user_id, group_id):
+        await cb.answer("Вы не состоите в этой группе.", show_alert=True)
+        return
+
+    if has_pending_group_request(user_id, group_id, "leave"):
+        await cb.answer("Заявка уже отправлена и ожидает решения.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO group_requests (user_id, group_id, type, status, requested_at, requested_by)
+        VALUES (?, ?, 'leave', 'pending', ?, ?)
+    """, (user_id, group_id, datetime.datetime.now().isoformat(), user_id))
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    await cb.message.answer(f"Заявка на выход из группы «{group_name}» отправлена.")
+    await cb.answer()
+
+    # Уведомим админов группы и суперадминов
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Одобрить", callback_data=f"grp_req_approve:{req_id}"),
+        InlineKeyboardButton(text="Отклонить", callback_data=f"grp_req_decline:{req_id}")
+    ]])
+    text_admin = (
+        f"Запрос на выход из группы «{group_name}»\n"
         f"От: {get_user_fullname(user_id)}"
     )
     admin_ids = set(get_group_admins(group_id) + get_admins())
