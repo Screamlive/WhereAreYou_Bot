@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import sqlite3
 import datetime
 
 from aiogram import Bot, Dispatcher, types
@@ -37,6 +36,40 @@ from db_repo import (
     get_group_members,
     get_all_users,
     get_user_fullname,
+    create_group,
+    delete_group,
+    get_group_membership_role,
+    update_group_membership_role,
+    add_group_membership,
+    list_group_admin_users,
+    remove_user_from_group,
+    list_pending_group_requests,
+    get_group_request,
+    set_group_request_status,
+    create_group_request,
+    create_absence,
+    list_user_absences,
+    get_absence_by_id,
+    update_absence,
+    update_absence_status,
+    delete_absence,
+    list_pending_absences,
+    create_edit_request,
+    get_edit_request,
+    delete_edit_request,
+    list_approved_absences_between,
+    list_approved_absences_for_date,
+    upsert_user_registration,
+    get_user_approval_status,
+    approve_user,
+    delete_user_and_related,
+    list_pending_user_ids,
+    list_non_admin_approved_users,
+    list_admin_users,
+    promote_to_admin,
+    revoke_admin,
+    update_user_fullname,
+    get_user_name_and_username,
 )
 from keyboards import (
     BACK_BUTTON_TEXT,
@@ -124,21 +157,6 @@ from texts import (
 # ЛОГИРОВАНИЕ
 ###############################################################################
 logging.basicConfig(level=logging.DEBUG)
-
-def log_action(user_id: int, action: str):
-    """
-    Записываем действие в таблицу logs + выводим в консоль
-    """
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO logs (action_time, user_id, action) VALUES (?, ?, ?)",
-        (datetime.datetime.now().isoformat(), user_id, action)
-    )
-    conn.commit()
-    conn.close()
-
-    logging.info(f"[LOG_ACTION] user={user_id} | {action}")
 
 ###############################################################################
 # ИНИЦИАЛИЗАЦИЯ БД И БОТА
@@ -415,27 +433,7 @@ async def process_fullname(message: types.Message, state: FSMContext):
     username = message.from_user.username or ""
     log_action(tg_id, f"Регистрация. Указал ФИО: {fullname}")
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
-    # Если запись уже существует, обновим
-    cur.execute("SELECT 1 FROM users WHERE telegram_id=?", (tg_id,))
-    row = cur.fetchone()
-
-    if row:
-        cur.execute("""
-            UPDATE users
-            SET username=?, fullname=?, is_approved=0
-            WHERE telegram_id=?
-        """, (username, fullname, tg_id))
-    else:
-        cur.execute("""
-            INSERT INTO users (telegram_id, username, fullname, is_approved, is_admin)
-            VALUES (?, ?, ?, 0, 0)
-        """, (tg_id, username, fullname))
-
-    conn.commit()
-    conn.close()
+    upsert_user_registration(tg_id, username, fullname)
 
     await message.answer("Спасибо! Ваша заявка отправлена администратору.")
     await state.clear()
@@ -471,23 +469,16 @@ async def inline_approve_user(cb: CallbackQuery):
     action, user_id_str = cb.data.split(":")
     user_id = int(user_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT is_approved FROM users WHERE telegram_id=?", (user_id,))
-    row = cur.fetchone()
-    if not row:
+    status = get_user_approval_status(user_id)
+    if status is None:
         await cb.answer(TEXT_USER_NOT_FOUND, show_alert=True)
-        conn.close()
         return
 
     if action == "approve_user":
-        if row[0] == 1:
+        if status == 1:
             await cb.answer("Этот пользователь уже одобрен.", show_alert=True)
-            conn.close()
             return
-        cur.execute("UPDATE users SET is_approved=1 WHERE telegram_id=?", (user_id,))
-        conn.commit()
-        conn.close()
+        approve_user(user_id)
 
         fname = get_user_fullname(user_id)
         await cb.message.answer(f"{fname} — теперь одобрен.")
@@ -503,14 +494,10 @@ async def inline_approve_user(cb: CallbackQuery):
             pass
 
     else:  # decline_user
-        if row[0] == 1:
+        if status == 1:
             await cb.answer("Этот пользователь уже одобрен, отклонение не имеет смысла.", show_alert=True)
-            conn.close()
             return
-
-        cur.execute("DELETE FROM users WHERE telegram_id=?", (user_id,))
-        conn.commit()
-        conn.close()
+        delete_user_and_related(user_id)
 
         await cb.message.answer(f"Пользователь {user_id} удалён и отклонён.")
         log_action(cb.from_user.id, f"decline_user {user_id}")
@@ -550,11 +537,7 @@ async def cmd_approve(message: types.Message):
         await message.answer("Неверный формат.")
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET is_approved=1 WHERE telegram_id=?", (target_id,))
-    conn.commit()
-    conn.close()
+    approve_user(target_id)
 
     await message.answer(f"Пользователь {target_id} одобрен.")
     log_action(message.from_user.id, f"approve {target_id}")
@@ -582,11 +565,7 @@ async def cmd_decline(message: types.Message):
         await message.answer("Неверный формат ID.")
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM users WHERE telegram_id=?", (target_id,))
-    conn.commit()
-    conn.close()
+    delete_user_and_related(target_id)
 
     await message.answer(f"Пользователь {target_id} отклонён.")
     log_action(message.from_user.id, f"decline {target_id}")
@@ -604,19 +583,14 @@ async def list_pending_users(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT telegram_id FROM users WHERE is_approved=0")
-    rows = cur.fetchall()
-    conn.close()
-
+    rows = list_pending_user_ids()
     if not rows:
         await message.answer("Нет заявок на одобрение.")
         return
 
     text_list = "Ожидают одобрения:\n"
     kb_rows = []
-    for (tid,) in rows:
+    for tid in rows:
         disp = get_user_fullname(tid)
         text_list += f"- {disp}\n"
         kb_rows.append([InlineKeyboardButton(text=disp, callback_data=f"dummy:{tid}")])
@@ -653,16 +627,7 @@ async def list_approved_users(message: types.Message):
         return
 
     # Глобально (суперадмин)
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname, username
-        FROM users
-        WHERE is_approved=1
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
+    rows = get_approved_users()
 
     if not rows:
         await message.answer(TEXT_NO_APPROVED_EMPLOYEES)
@@ -688,17 +653,7 @@ async def list_group_admins_cmd(message: types.Message):
         await message.answer(TEXT_SELECT_GROUP_FIRST)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT u.telegram_id, u.fullname, u.username
-        FROM group_memberships gm
-        JOIN users u ON u.telegram_id = gm.user_id
-        WHERE gm.group_id=? AND gm.role='admin'
-        ORDER BY u.fullname
-    """, (group_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_group_admin_users(group_id)
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
     if not rows:
@@ -740,19 +695,10 @@ async def create_group_finish(message: types.Message, state: FSMContext):
         await message.answer("Пустое название. Попробуйте снова.")
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            INSERT INTO groups (name, created_at, created_by)
-            VALUES (?, ?, ?)
-        """, (name, datetime.datetime.now().isoformat(), message.from_user.id))
-        conn.commit()
+    if create_group(name, message.from_user.id):
         await message.answer(f"Группа создана: {name}", reply_markup=get_role_menu(message.from_user.id))
-    except sqlite3.IntegrityError:
+    else:
         await message.answer("Такая группа уже существует.", reply_markup=get_role_menu(message.from_user.id))
-    finally:
-        conn.close()
 
     await state.clear()
 
@@ -835,14 +781,7 @@ async def delete_group_confirmed(cb: CallbackQuery):
         await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM group_memberships WHERE group_id=?", (group_id,))
-    cur.execute("DELETE FROM group_requests WHERE group_id=?", (group_id,))
-    cur.execute("UPDATE users SET last_group_id=NULL WHERE last_group_id=?", (group_id,))
-    cur.execute("DELETE FROM groups WHERE id=?", (group_id,))
-    conn.commit()
-    conn.close()
+    delete_group(group_id)
 
     log_action(cb.from_user.id, f"delete_group {group_id}")
     await cb.message.answer(f"Группа «{group_name}» удалена.", reply_markup=get_role_menu(cb.from_user.id))
@@ -916,12 +855,7 @@ async def superadmin_change_name_finish(message: types.Message, state: FSMContex
         await state.clear()
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET fullname=? WHERE telegram_id=?", (new_name, user_id))
-    conn.commit()
-    updated = cur.rowcount > 0
-    conn.close()
+    updated = update_user_fullname(user_id, new_name)
 
     if not updated:
         await message.answer(TEXT_USER_NOT_FOUND)
@@ -968,12 +902,7 @@ async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContex
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT fullname, username FROM users WHERE telegram_id=?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-
+    row = get_user_name_and_username(user_id)
     if not row:
         await cb.answer(TEXT_USER_NOT_FOUND, show_alert=True)
         await state.clear()
@@ -1054,16 +983,7 @@ async def superadmin_delete_user_execute(cb: CallbackQuery):
 
     fullname = get_user_fullname(user_id)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM group_memberships WHERE user_id=?", (user_id,))
-    cur.execute("DELETE FROM group_requests WHERE user_id=?", (user_id,))
-    cur.execute("DELETE FROM absences WHERE user_id=?", (user_id,))
-    cur.execute("DELETE FROM edit_requests WHERE user_id=?", (user_id,))
-    cur.execute("UPDATE users SET last_group_id=NULL WHERE telegram_id=?", (user_id,))
-    cur.execute("DELETE FROM users WHERE telegram_id=?", (user_id,))
-    conn.commit()
-    conn.close()
+    delete_user_and_related(user_id)
 
     log_action(cb.from_user.id, f"delete_user_from_bot {user_id}")
     await cb.message.answer(f"Пользователь удалён из бота: {fullname}", reply_markup=get_role_menu(cb.from_user.id))
@@ -1155,25 +1075,13 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT role
-        FROM group_memberships
-        WHERE user_id=? AND group_id=?
-    """, (user_id, group_id))
-    row = cur.fetchone()
+    role = get_group_membership_role(user_id, group_id)
 
-    if row:
-        if row[0] == "admin":
+    if role:
+        if role == "admin":
             msg = TEXT_USER_ALREADY_GROUP_ADMIN
         else:
-            cur.execute("""
-                UPDATE group_memberships
-                SET role='admin'
-                WHERE user_id=? AND group_id=?
-            """, (user_id, group_id))
-            conn.commit()
+            update_group_membership_role(user_id, group_id, "admin")
             msg = "Роль пользователя обновлена на админа группы."
             try:
                 group_name = get_group_name(group_id) or f"ID={group_id}"
@@ -1189,11 +1097,7 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             except:
                 pass
     else:
-        cur.execute("""
-            INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
-            VALUES (?, ?, 'admin', ?, ?)
-        """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
-        conn.commit()
+        add_group_membership(user_id, group_id, "admin", cb.from_user.id)
         msg = "Пользователь назначен админом группы."
         try:
             group_name = get_group_name(group_id) or f"ID={group_id}"
@@ -1208,8 +1112,6 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             )
         except:
             pass
-
-    conn.close()
     await cb.message.answer(msg, reply_markup=get_role_menu(cb.from_user.id))
     await cb.answer()
     await state.clear()
@@ -1256,17 +1158,7 @@ async def revoke_group_admin_pick_group(cb: CallbackQuery, state: FSMContext):
 
     await state.update_data(group_id=group_id)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT u.telegram_id, u.fullname, u.username
-        FROM group_memberships gm
-        JOIN users u ON u.telegram_id = gm.user_id
-        WHERE gm.group_id=? AND gm.role='admin'
-        ORDER BY u.fullname
-    """, (group_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_group_admin_users(group_id)
 
     if not rows:
         await cb.message.answer("В этой группе нет администраторов.")
@@ -1301,28 +1193,14 @@ async def revoke_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT role
-        FROM group_memberships
-        WHERE user_id=? AND group_id=?
-    """, (user_id, group_id))
-    row = cur.fetchone()
+    role = get_group_membership_role(user_id, group_id)
 
-    if not row or row[0] != "admin":
-        conn.close()
+    if not role or role != "admin":
         await cb.answer("Пользователь не является администратором этой группы.", show_alert=True)
         await state.clear()
         return
 
-    cur.execute("""
-        UPDATE group_memberships
-        SET role='member'
-        WHERE user_id=? AND group_id=?
-    """, (user_id, group_id))
-    conn.commit()
-    conn.close()
+    update_group_membership_role(user_id, group_id, "member")
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
     log_action(cb.from_user.id, f"revoke_group_admin {user_id} group={group_id}")
@@ -1415,26 +1293,15 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT role
-        FROM group_memberships
-        WHERE user_id=? AND group_id=?
-    """, (user_id, group_id))
-    row = cur.fetchone()
+    role = get_group_membership_role(user_id, group_id)
 
-    if row:
-        if row[0] == "admin":
+    if role:
+        if role == "admin":
             msg = TEXT_USER_ALREADY_GROUP_ADMIN
         else:
             msg = "Пользователь уже состоит в группе."
     else:
-        cur.execute("""
-            INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
-            VALUES (?, ?, 'member', ?, ?)
-        """, (user_id, group_id, datetime.datetime.now().isoformat(), cb.from_user.id))
-        conn.commit()
+        add_group_membership(user_id, group_id, "member", cb.from_user.id)
         msg = "Пользователь добавлен в группу."
         try:
             group_name = get_group_name(group_id) or f"ID={group_id}"
@@ -1449,8 +1316,6 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
             )
         except:
             pass
-
-    conn.close()
     await cb.message.answer(msg, reply_markup=get_role_menu(cb.from_user.id))
     await cb.answer()
     await state.clear()
@@ -1534,20 +1399,7 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        DELETE FROM group_memberships
-        WHERE user_id=? AND group_id=?
-    """, (user_id, group_id))
-    deleted = cur.rowcount > 0
-    cur.execute("""
-        UPDATE users
-        SET last_group_id=NULL
-        WHERE telegram_id=? AND last_group_id=?
-    """, (user_id, group_id))
-    conn.commit()
-    conn.close()
+    deleted = remove_user_from_group(user_id, group_id)
 
     if not deleted:
         await cb.message.answer(TEXT_USER_NOT_IN_GROUP, reply_markup=get_role_menu(cb.from_user.id))
@@ -1593,28 +1445,7 @@ async def show_group_requests(message: types.Message):
 
     req_type = "join" if "вступление" in message.text else "leave"
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    if group_id:
-        cur.execute("""
-            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
-            FROM group_requests gr
-            JOIN users u ON u.telegram_id = gr.user_id
-            JOIN groups g ON g.id = gr.group_id
-            WHERE gr.status='pending' AND gr.group_id=? AND gr.type=?
-            ORDER BY u.fullname
-        """, (group_id, req_type))
-    else:
-        cur.execute("""
-            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
-            FROM group_requests gr
-            JOIN users u ON u.telegram_id = gr.user_id
-            JOIN groups g ON g.id = gr.group_id
-            WHERE gr.status='pending' AND gr.type=?
-            ORDER BY g.name, u.fullname
-        """, (req_type,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_pending_group_requests(req_type, group_id)
 
     if not rows:
         empty_label = "вступление" if req_type == "join" else "выход"
@@ -1649,27 +1480,17 @@ async def handle_group_request(cb: CallbackQuery):
         await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, group_id, type, status
-        FROM group_requests
-        WHERE id=?
-    """, (req_id,))
-    row = cur.fetchone()
+    row = get_group_request(req_id)
     if not row:
-        conn.close()
         await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
 
     req_user_id, group_id, req_type, status = row
     if status != "pending":
-        conn.close()
         await cb.answer("Заявка уже обработана.", show_alert=True)
         return
 
     if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
-        conn.close()
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
@@ -1679,28 +1500,11 @@ async def handle_group_request(cb: CallbackQuery):
     if action == "grp_req_approve":
         if req_type == "join":
             if not user_in_group(req_user_id, group_id):
-                cur.execute("""
-                    INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
-                    VALUES (?, ?, 'member', ?, ?)
-                """, (req_user_id, group_id, now, user_id))
+                add_group_membership(req_user_id, group_id, "member", user_id)
         elif req_type == "leave":
-            cur.execute("""
-                DELETE FROM group_memberships
-                WHERE user_id=? AND group_id=?
-            """, (req_user_id, group_id))
-            cur.execute("""
-                UPDATE users
-                SET last_group_id=NULL
-                WHERE telegram_id=? AND last_group_id=?
-            """, (req_user_id, group_id))
+            remove_user_from_group(req_user_id, group_id)
 
-        cur.execute("""
-            UPDATE group_requests
-            SET status='approved', reviewed_at=?, reviewed_by=?
-            WHERE id=?
-        """, (now, user_id, req_id))
-        conn.commit()
-        conn.close()
+        set_group_request_status(req_id, "approved", now, user_id)
 
         await cb.message.answer(f"Заявка #{req_id} одобрена.")
         try:
@@ -1721,13 +1525,7 @@ async def handle_group_request(cb: CallbackQuery):
         return
 
     # decline
-    cur.execute("""
-        UPDATE group_requests
-        SET status='declined', reviewed_at=?, reviewed_by=?
-        WHERE id=?
-    """, (now, user_id, req_id))
-    conn.commit()
-    conn.close()
+    set_group_request_status(req_id, "declined", now, user_id)
 
     await cb.message.answer(f"Заявка #{req_id} отклонена.")
     try:
@@ -1840,17 +1638,7 @@ async def pick_user_for_admin(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_approved=1
-            AND is_admin=0
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_non_admin_approved_users()
 
     if not rows:
         await message.answer("Нет подходящих пользователей (либо все уже админы).")
@@ -1877,12 +1665,8 @@ async def callback_make_admin_user(cb: CallbackQuery):
     user_id_str = cb.data.split(":")[1]
     user_id = int(user_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
     # Одобряем + is_admin=1
-    cur.execute("UPDATE users SET is_approved=1, is_admin=1 WHERE telegram_id=?", (user_id,))
-    conn.commit()
-    conn.close()
+    promote_to_admin(user_id)
 
     await cb.message.answer(f"Пользователь {get_user_fullname(user_id)} теперь администратор.")
     log_action(cb.from_user.id, f"make_admin {user_id}")
@@ -1905,18 +1689,8 @@ async def pick_admin_to_revoke(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
     # Можем исключить из списка самого себя, если хотите
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_admin=1
-        AND telegram_id != ?
-        ORDER BY fullname
-    """, (message.from_user.id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_admin_users(exclude_id=message.from_user.id)
 
     if not rows:
         await message.answer("Нет других администраторов, которым можно отозвать права.")
@@ -1943,11 +1717,7 @@ async def callback_revoke_admin_user(cb: CallbackQuery):
     user_id_str = cb.data.split(":")[1]
     user_id = int(user_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET is_admin=0 WHERE telegram_id=?", (user_id,))
-    conn.commit()
-    conn.close()
+    revoke_admin(user_id)
 
     await cb.message.answer(f"Админ-права у {get_user_fullname(user_id)} отозваны.")
     log_action(cb.from_user.id, f"revoke_admin {user_id}")
@@ -1969,18 +1739,13 @@ async def list_admins_cmd(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT telegram_id FROM users WHERE is_admin=1")
-    rows = cur.fetchall()
-    conn.close()
-
+    rows = get_admins()
     if not rows:
         await message.answer("Нет суперадминистраторов.")
         return
 
     txt = "Список суперадминистраторов:\n"
-    for (tid,) in rows:
+    for tid in rows:
         txt += f"- {get_user_fullname(tid)}\n"
     await message.answer(txt)
 
@@ -2046,16 +1811,7 @@ async def callback_remove_user(cb: CallbackQuery):
         await cb.answer(TEXT_USER_NOT_IN_GROUP, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("DELETE FROM group_memberships WHERE user_id=? AND group_id=?", (user_id, group_id))
-    cur.execute("""
-        UPDATE users
-        SET last_group_id=NULL
-        WHERE telegram_id=? AND last_group_id=?
-    """, (user_id, group_id))
-    conn.commit()
-    conn.close()
+    remove_user_from_group(user_id, group_id)
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
     await cb.message.answer(f"Пользователь {user_id} удалён из группы {group_name}.")
@@ -2176,15 +1932,7 @@ async def process_comment(message: types.Message, state: FSMContext):
     sd = data["start_date"]
     ed = data["end_date"]
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO absences (user_id, category, start_date, end_date, comment, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, cat, sd, ed, comment, "pending"))
-    abs_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    abs_id = create_absence(user_id, cat, sd, ed, comment, "pending")
 
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
@@ -2242,16 +1990,7 @@ async def show_my_absences(message: types.Message):
         await message.answer(TEXT_NOT_IN_ANY_GROUP)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE user_id=?
-        ORDER BY start_date
-    """, (user_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_user_absences(user_id)
 
     if not rows:
         await message.answer("У вас нет заявок на отсутствие.")
@@ -2352,15 +2091,7 @@ async def request_join_group(cb: CallbackQuery):
         await cb.answer(TEXT_REQUEST_ALREADY_PENDING, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO group_requests (user_id, group_id, type, status, requested_at, requested_by)
-        VALUES (?, ?, 'join', 'pending', ?, ?)
-    """, (user_id, group_id, datetime.datetime.now().isoformat(), user_id))
-    req_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    req_id = create_group_request(user_id, group_id, "join", user_id)
 
     await cb.message.answer(f"Заявка на вступление в группу «{group_name}» отправлена.")
     await cb.answer()
@@ -2430,15 +2161,7 @@ async def request_leave_group(cb: CallbackQuery):
         await cb.answer(TEXT_REQUEST_ALREADY_PENDING, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO group_requests (user_id, group_id, type, status, requested_at, requested_by)
-        VALUES (?, ?, 'leave', 'pending', ?, ?)
-    """, (user_id, group_id, datetime.datetime.now().isoformat(), user_id))
-    req_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    req_id = create_group_request(user_id, group_id, "leave", user_id)
 
     await cb.message.answer(f"Заявка на выход из группы «{group_name}» отправлена.")
     await cb.answer()
@@ -2480,21 +2203,12 @@ async def admin_edit_my_absences_alias(message: types.Message):
 async def request_delete_absence(cb: CallbackQuery):
     abs_id = int(cb.data.split(":")[1])
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, category, start_date, end_date, status
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    row = cur.fetchone()
-    conn.close()
-
+    row = get_absence_by_id(abs_id)
     if not row:
         await cb.answer("Отсутствие не найдено.", show_alert=True)
         return
 
-    user_id, cat, sd, ed, st = row
+    user_id, cat, sd, ed, _cmnt, st = row
     if user_id != cb.from_user.id:
         await cb.answer(TEXT_NOT_YOUR_REQUEST, show_alert=True)
         return
@@ -2533,16 +2247,7 @@ async def request_edit_absence(cb: CallbackQuery, state: FSMContext):
     abs_id = int(abs_id_str)
 
     # Проверим, что заявка существует и принадлежит текущему пользователю
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    row = cur.fetchone()
-    conn.close()
-
+    row = get_absence_by_id(abs_id)
     if not row:
         await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
@@ -2630,32 +2335,19 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
 
     # 1) Считаем из absences старые поля
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT category, start_date, end_date, comment
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    old_row = cur.fetchone()
+    old_row = get_absence_by_id(abs_id)
     if not old_row:
         await message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
-        conn.close()
         return
 
-    old_cat, old_sd, old_ed, old_cmnt = old_row
+    _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
     old_sd_disp = format_date_display(old_sd)
     old_ed_disp = format_date_display(old_ed)
     new_sd_disp = format_date_display(new_sd)
     new_ed_disp = format_date_display(new_ed)
 
     # 2) Записываем в edit_requests
-    cur.execute("""
-        INSERT INTO edit_requests (abs_id, new_cat, new_sd, new_ed, new_comment, user_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (abs_id, new_cat, new_sd, new_ed, comment, user_id))
-    req_id = cur.lastrowid
-    conn.commit()
+    req_id = create_edit_request(abs_id, new_cat, new_sd, new_ed, comment, user_id)
 
     # 3) Формируем уведомление админу: "старое" vs "новое"
     old_part = (
@@ -2676,16 +2368,13 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         f"{old_part}{new_part}"
     )
 
-    # 4) Закрываем conn
-    conn.close()
-
-    # 5) Сообщаем пользователю
+    # 4) Сообщаем пользователю
     await message.answer(
         f"Запрос на изменение заявки #{abs_id} отправлен на одобрение администратору.\n"
         f"(Старое и новое видно админу)."
     )
 
-    # 6) Шлём админам групп пользователя и суперадминам
+    # 5) Шлём админам групп пользователя и суперадминам
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
         InlineKeyboardButton(text="Отклонить", callback_data=f"decline_edit:{req_id}")
@@ -2718,48 +2407,33 @@ async def edit_approval_callback(cb: CallbackQuery):
     action, req_id_str = cb.data.split(":")
     req_id = int(req_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT abs_id, new_cat, new_sd, new_ed, new_comment, user_id FROM edit_requests WHERE id=?", (req_id,))
-    row = cur.fetchone()
+    row = get_edit_request(req_id)
     if not row:
         await cb.message.answer("Запрос на изменение не найден.")
-        conn.close()
         await cb.answer()
         return
 
     abs_id, new_cat, new_sd, new_ed, new_comment, user_id = row
     if group_id and not user_in_group(user_id, group_id):
-        conn.close()
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     # Считываем старые поля (если хотите показать «старое → новое» админу)
-    cur.execute("""
-        SELECT category, start_date, end_date, comment
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    old_row = cur.fetchone()
+    old_row = get_absence_by_id(abs_id)
     if not old_row:
         await cb.message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
-        conn.close()
         await cb.answer()
         return
-    old_cat, old_sd, old_ed, old_cmnt = old_row
+    _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
+    old_sd_disp = format_date_display(old_sd)
+    old_ed_disp = format_date_display(old_ed)
+    new_sd_disp = format_date_display(new_sd)
+    new_ed_disp = format_date_display(new_ed)
 
     if action == "approve_edit":
         # Применяем новые поля
-        cur.execute("""
-            UPDATE absences
-            SET category=?, start_date=?, end_date=?, comment=?
-            WHERE id=?
-        """, (new_cat, new_sd, new_ed, new_comment, abs_id))
-
-        # Удаляем запрос
-        cur.execute("DELETE FROM edit_requests WHERE id=?", (req_id,))
-        conn.commit()
-        conn.close()
+        update_absence(abs_id, new_cat, new_sd, new_ed, new_comment)
+        delete_edit_request(req_id)
 
         # Показываем «старое → новое» админу (при желании)
         old_text = (
@@ -2789,9 +2463,7 @@ async def edit_approval_callback(cb: CallbackQuery):
 
     else:  # "decline_edit"
         # Никакого UPDATE не делаем — просто удаляем запрос
-        cur.execute("DELETE FROM edit_requests WHERE id=?", (req_id,))
-        conn.commit()
-        conn.close()
+        delete_edit_request(req_id)
 
         await cb.message.answer(f"Изменение заявки #{abs_id} отклонено.")
         # Уведомляем пользователя
@@ -2819,31 +2491,20 @@ async def confirm_delete_absence(cb: CallbackQuery):
     action, abs_id_str = cb.data.split(":")
     abs_id = int(abs_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, category, start_date, end_date
-        FROM absences
-        WHERE id=? AND status='approved'
-    """, (abs_id,))
-    row = cur.fetchone()
-    if not row:
+    row = get_absence_by_id(abs_id)
+    if not row or row[5] != "approved":
         await cb.message.answer("Не найдено или не 'approved'.")
-        conn.close()
         await cb.answer()
         return
 
-    user_id, cat, sd, ed = row
+    user_id, cat, sd, ed, _cmnt, _st = row
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
-        conn.close()
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if action == "approve_del":
-        cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
-        conn.commit()
-        conn.close()
+        delete_absence(abs_id)
         await cb.message.answer(f"Удаление #{abs_id} одобрено. Запись удалена.")
         log_action(admin_id, f"approve_del absence {abs_id}")
         try:
@@ -2851,7 +2512,6 @@ async def confirm_delete_absence(cb: CallbackQuery):
         except:
             pass
     else:
-        conn.close()
         await cb.message.answer(f"Удаление #{abs_id} отклонено.")
         log_action(cb.from_user.id, f"decline_del absence {abs_id}")
         try:
@@ -2885,25 +2545,7 @@ async def show_absence_requests(message: types.Message):
         reply_markup=cancel_kb
     )
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    if group_id:
-        cur.execute("""
-            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
-            FROM absences a
-            JOIN group_memberships gm ON gm.user_id = a.user_id
-            WHERE a.status='pending' AND gm.group_id=?
-            ORDER BY a.start_date
-        """, (group_id,))
-    else:
-        cur.execute("""
-            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
-            FROM absences a
-            WHERE a.status='pending'
-            ORDER BY a.start_date
-        """)
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_pending_absences(group_id)
 
     if not rows:
         await message.answer("Нет заявок (pending).")
@@ -2943,28 +2585,20 @@ async def callback_absence_approval(cb: CallbackQuery):
     action, abs_id_str = cb.data.split(":")
     abs_id = int(abs_id_str)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    row = cur.fetchone()
+    row = get_absence_by_id(abs_id)
     if not row:
         await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
-        conn.close()
         return
 
     user_id, cat, sd, ed, cmnt, st = row
     if st != "pending":
         await cb.answer("Эта заявка уже обработана.", show_alert=True)
-        conn.close()
         return
     if group_id and not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
-        conn.close()
         return
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
 
     if action == "approve_abs":
         new_status = "approved"
@@ -2975,9 +2609,7 @@ async def callback_absence_approval(cb: CallbackQuery):
         txt_admin = f"Заявка #{abs_id} отклонена."
         txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) отклонена."
 
-    cur.execute("UPDATE absences SET status=? WHERE id=?", (new_status, abs_id))
-    conn.commit()
-    conn.close()
+    update_absence_status(abs_id, new_status)
 
     await cb.message.answer(txt_admin)
     log_action(admin_id, f"{action} absence {abs_id}")
@@ -3015,23 +2647,14 @@ async def select_user_for_absences(message: types.Message):
         await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_approved=1
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
+    rows = get_approved_users()
 
     if not rows:
         await message.answer(TEXT_NO_APPROVED_EMPLOYEES)
         return
 
     kb_rows = []
-    for (tid, fname) in rows:
+    for (tid, fname, _username) in rows:
         kb_rows.append([
             InlineKeyboardButton(text=fname, callback_data=f"show_abs:{tid}")
         ])
@@ -3054,16 +2677,7 @@ async def cb_show_absences(cb: CallbackQuery):
     if group_id and not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT category, start_date, end_date, comment, status
-        FROM absences
-        WHERE user_id=?
-        ORDER BY start_date
-    """, (user_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_user_absences(user_id)
 
     user_disp = get_user_fullname(user_id)
 
@@ -3073,7 +2687,7 @@ async def cb_show_absences(cb: CallbackQuery):
         return
 
     text_report = f"Отсутствия {user_disp}:\n"
-    for (cat, sd, ed, cmnt, st) in rows:
+    for (_abs_id, cat, sd, ed, cmnt, st) in rows:
         sd_disp = format_date_display(sd)
         ed_disp = format_date_display(ed)
         text_report += f"- {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
@@ -3136,16 +2750,7 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
     if not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE user_id=?
-        ORDER BY start_date
-    """, (user_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_user_absences(user_id)
 
     user_disp = get_user_fullname(user_id)
 
@@ -3182,23 +2787,18 @@ async def admin_delete_absence_final(cb: CallbackQuery):
 
     abs_id = int(cb.data.split(":")[1])
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, category, start_date, end_date FROM absences WHERE id=?", (abs_id,))
-    row = cur.fetchone()
+    row = get_absence_by_id(abs_id)
     if not row:
         await cb.answer("Не найдено или уже удалено.", show_alert=True)
-        conn.close()
         return
 
-    user_id, cat, sd, ed = row
+    user_id, cat, sd, ed, _cmnt, _st = row
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
-        conn.close()
         return
-    cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
-    conn.commit()
-    conn.close()
+    delete_absence(abs_id)
 
     await cb.message.answer(f"Отсутствие #{abs_id} ({cat} {sd_disp}–{ed_disp}) удалено админом.")
     log_action(cb.from_user.id, f"adm_del_abs {abs_id}")
@@ -3296,16 +2896,7 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE user_id=?
-        ORDER BY start_date
-    """, (user_id,))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_user_absences(user_id)
 
     if not rows:
         await cb.message.answer("У сотрудника нет заявок.")
@@ -3343,16 +2934,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
         return
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT user_id, category, start_date, end_date, comment, status
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    row = cur.fetchone()
-    conn.close()
-
+    row = get_absence_by_id(abs_id)
     if not row:
         await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
@@ -3442,32 +3024,18 @@ async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
     new_ed = data["new_end_date"]
     target_user_id = data["target_user_id"]
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT category, start_date, end_date, comment, status
-        FROM absences
-        WHERE id=?
-    """, (abs_id,))
-    old_row = cur.fetchone()
+    old_row = get_absence_by_id(abs_id)
     if not old_row:
-        conn.close()
         await message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
         await state.clear()
         return
 
-    old_cat, old_sd, old_ed, old_cmnt, old_status = old_row
+    _old_user_id, old_cat, old_sd, old_ed, old_cmnt, old_status = old_row
     old_sd_disp = format_date_display(old_sd)
     old_ed_disp = format_date_display(old_ed)
     new_sd_disp = format_date_display(new_sd)
     new_ed_disp = format_date_display(new_ed)
-    cur.execute("""
-        UPDATE absences
-        SET category=?, start_date=?, end_date=?, comment=?
-        WHERE id=?
-    """, (new_cat, new_sd, new_ed, comment, abs_id))
-    conn.commit()
-    conn.close()
+    update_absence(abs_id, new_cat, new_sd, new_ed, comment)
 
     await message.answer(
         f"Заявка #{abs_id} обновлена.\n"
@@ -3575,35 +3143,8 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     sds_disp = format_date_display(sds)
     eds_disp = format_date_display(eds)
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
     # Выбираем approved-отсутствия, пересекающие [sds; eds]
-    if group_id:
-        cur.execute("""
-            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
-                   u.fullname, u.username
-            FROM absences a
-            JOIN users u ON a.user_id = u.telegram_id
-            JOIN group_memberships gm ON gm.user_id = a.user_id
-            WHERE a.status='approved'
-              AND gm.group_id=?
-              AND date(a.start_date) <= date(?)
-              AND date(a.end_date) >= date(?)
-            ORDER BY a.start_date
-        """, (group_id, eds, sds))
-    else:
-        cur.execute("""
-            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
-                   u.fullname, u.username
-            FROM absences a
-            JOIN users u ON a.user_id = u.telegram_id
-            WHERE a.status='approved'
-              AND date(a.start_date) <= date(?)
-              AND date(a.end_date) >= date(?)
-            ORDER BY a.start_date
-        """, (eds, sds))
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_approved_absences_between(sds, eds, group_id)
 
     logging.debug(f"Found {len(rows)} rows for CSV export from {sds} to {eds}")
 
@@ -3677,44 +3218,7 @@ async def show_absences_today(message: types.Message):
     # Ищем все approved-записи, у которых период пересекается с сегодняшней датой
     # Условие пересечения:
     # start_date <= today <= end_date
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    if group_id:
-        cur.execute("""
-            SELECT a.user_id,
-                   a.category,
-                   a.start_date,
-                   a.end_date,
-                   a.comment,
-                   u.fullname,
-                   u.username
-            FROM absences a
-            JOIN users u ON a.user_id = u.telegram_id
-            JOIN group_memberships gm ON gm.user_id = a.user_id
-            WHERE a.status='approved'
-              AND gm.group_id=:gid
-              AND date(a.start_date) <= date(:tod)
-              AND date(a.end_date) >= date(:tod)
-            ORDER BY a.start_date
-        """, {"tod": today_iso, "gid": group_id})
-    else:
-        cur.execute("""
-            SELECT a.user_id,
-                   a.category,
-                   a.start_date,
-                   a.end_date,
-                   a.comment,
-                   u.fullname,
-                   u.username
-            FROM absences a
-            JOIN users u ON a.user_id = u.telegram_id
-            WHERE a.status='approved'
-              AND date(a.start_date) <= date(:tod)
-              AND date(a.end_date) >= date(:tod)
-            ORDER BY a.start_date
-        """, {"tod": today_iso})
-    rows = cur.fetchall()
-    conn.close()
+    rows = list_approved_absences_for_date(today_iso, group_id)
 
 
     if not rows:
@@ -3781,16 +3285,7 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
     )
 
     # Собираем список одобренных сотрудников
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT telegram_id, fullname
-        FROM users
-        WHERE is_approved=1
-        ORDER BY fullname
-    """)
-    rows = cur.fetchall()
-    conn.close()
+    rows = get_approved_users()
 
     if not rows:
         await message.answer("Нет ни одного одобренного сотрудника в системе.")
@@ -3798,7 +3293,7 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
 
     # Формируем inline-кнопки для выбора сотрудника
     kb_rows = []
-    for (tid, fname) in rows:
+    for (tid, fname, _username) in rows:
         # Кнопка: название = fullname, callback_data = add_for_user:<ID>
         kb_rows.append([
             InlineKeyboardButton(text=fname, callback_data=f"add_for_user:{tid}")
@@ -3916,15 +3411,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     ed_disp = format_date_display(ed)
 
     # Можно задать статус='pending' или сразу 'approved', как хотите
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO absences (user_id, category, start_date, end_date, comment, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (target_user_id, category, sd, ed, comment, "pending"))
-    abs_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    abs_id = create_absence(target_user_id, category, sd, ed, comment, "pending")
 
     await message.answer(
         f"Отсутствие #{abs_id} добавлено пользователю {get_user_fullname(target_user_id)}.\n"
@@ -3984,15 +3471,11 @@ async def broadcast_new_menu():
     """
     Рассылает новое меню всем одобренным пользователям.
     """
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
     # Берём только одобренных (is_approved=1), т.к. не имеет смысла обновлять не одобренным
-    cur.execute("SELECT telegram_id FROM users WHERE is_approved=1")
-    rows = cur.fetchall()
-    conn.close()
+    rows = get_approved_users()
 
     updated_count = 0
-    for (tg_id,) in rows:
+    for (tg_id, _fullname, _username) in rows:
         try:
             await bot.send_message(
                 tg_id,

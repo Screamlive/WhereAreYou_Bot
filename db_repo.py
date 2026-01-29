@@ -243,3 +243,603 @@ def get_user_fullname(tg_id: int) -> str:
             return f"{fullname} (@{username})"
         return f"{fullname}"
     return f"User {tg_id}"
+
+
+def create_group(name: str, created_by: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO groups (name, created_at, created_by)
+            VALUES (?, ?, ?)
+            """,
+            (name, datetime.datetime.now().isoformat(), created_by)
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def delete_group(group_id: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM group_memberships WHERE group_id=?", (group_id,))
+    cur.execute("DELETE FROM group_requests WHERE group_id=?", (group_id,))
+    cur.execute("UPDATE users SET last_group_id=NULL WHERE last_group_id=?", (group_id,))
+    cur.execute("DELETE FROM groups WHERE id=?", (group_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_group_membership_role(user_id: int, group_id: int) -> str | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT role
+        FROM group_memberships
+        WHERE user_id=? AND group_id=?
+        """,
+        (user_id, group_id)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def update_group_membership_role(user_id: int, group_id: int, role: str) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE group_memberships
+        SET role=?
+        WHERE user_id=? AND group_id=?
+        """,
+        (role, user_id, group_id)
+    )
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def add_group_membership(user_id: int, group_id: int, role: str, created_by: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO group_memberships (user_id, group_id, role, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (user_id, group_id, role, datetime.datetime.now().isoformat(), created_by)
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_group_admin_users(group_id: int) -> list[tuple[int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.telegram_id, u.fullname, u.username
+        FROM group_memberships gm
+        JOIN users u ON u.telegram_id = gm.user_id
+        WHERE gm.group_id=? AND gm.role='admin'
+        ORDER BY u.fullname
+        """,
+        (group_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def remove_user_from_group(user_id: int, group_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM group_memberships
+        WHERE user_id=? AND group_id=?
+        """,
+        (user_id, group_id)
+    )
+    deleted = cur.rowcount > 0
+    cur.execute(
+        """
+        UPDATE users
+        SET last_group_id=NULL
+        WHERE telegram_id=? AND last_group_id=?
+        """,
+        (user_id, group_id)
+    )
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def list_pending_group_requests(req_type: str, group_id: int | None = None) -> list[tuple[int, int, str, str, int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
+            FROM group_requests gr
+            JOIN users u ON u.telegram_id = gr.user_id
+            JOIN groups g ON g.id = gr.group_id
+            WHERE gr.status='pending' AND gr.group_id=? AND gr.type=?
+            ORDER BY u.fullname
+            """,
+            (group_id, req_type)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT gr.id, gr.user_id, u.fullname, u.username, g.id, g.name, gr.type
+            FROM group_requests gr
+            JOIN users u ON u.telegram_id = gr.user_id
+            JOIN groups g ON g.id = gr.group_id
+            WHERE gr.status='pending' AND gr.type=?
+            ORDER BY g.name, u.fullname
+            """,
+            (req_type,)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_group_request(req_id: int) -> tuple[int, int, str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, group_id, type, status
+        FROM group_requests
+        WHERE id=?
+        """,
+        (req_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def set_group_request_status(req_id: int, status: str, reviewed_at: str, reviewed_by: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE group_requests
+        SET status=?, reviewed_at=?, reviewed_by=?
+        WHERE id=?
+        """,
+        (status, reviewed_at, reviewed_by, req_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_group_request(user_id: int, group_id: int, req_type: str, requested_by: int) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO group_requests (user_id, group_id, type, status, requested_at, requested_by)
+        VALUES (?, ?, ?, 'pending', ?, ?)
+        """,
+        (user_id, group_id, req_type, datetime.datetime.now().isoformat(), requested_by)
+    )
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return req_id
+
+
+def create_absence(
+    user_id: int,
+    category: str,
+    start_date: str,
+    end_date: str,
+    comment: str,
+    status: str,
+) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO absences (user_id, category, start_date, end_date, comment, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (user_id, category, start_date, end_date, comment, status)
+    )
+    abs_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return abs_id
+
+
+def list_user_absences(user_id: int) -> list[tuple[int, str, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, category, start_date, end_date, comment, status
+        FROM absences
+        WHERE user_id=?
+        ORDER BY start_date
+        """,
+        (user_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_absence_by_id(abs_id: int) -> tuple[int, str, str, str, str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, category, start_date, end_date, comment, status
+        FROM absences
+        WHERE id=?
+        """,
+        (abs_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def update_absence(abs_id: int, category: str, start_date: str, end_date: str, comment: str) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE absences
+        SET category=?, start_date=?, end_date=?, comment=?
+        WHERE id=?
+        """,
+        (category, start_date, end_date, comment, abs_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_absence_status(abs_id: int, status: str) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE absences SET status=? WHERE id=?", (status, abs_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_absence(abs_id: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_pending_absences(group_id: int | None = None) -> list[tuple[int, int, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
+            FROM absences a
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='pending' AND gm.group_id=?
+            ORDER BY a.start_date
+            """,
+            (group_id,)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT a.id, a.user_id, a.category, a.start_date, a.end_date, a.comment
+            FROM absences a
+            WHERE a.status='pending'
+            ORDER BY a.start_date
+            """
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def create_edit_request(
+    abs_id: int,
+    new_cat: str,
+    new_sd: str,
+    new_ed: str,
+    new_comment: str,
+    user_id: int,
+) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO edit_requests (abs_id, new_cat, new_sd, new_ed, new_comment, user_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (abs_id, new_cat, new_sd, new_ed, new_comment, user_id)
+    )
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return req_id
+
+
+def get_edit_request(req_id: int) -> tuple[int, str, str, str, str, int] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT abs_id, new_cat, new_sd, new_ed, new_comment, user_id FROM edit_requests WHERE id=?",
+        (req_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def delete_edit_request(req_id: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM edit_requests WHERE id=?", (req_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_approved_absences_between(
+    start_date: str,
+    end_date: str,
+    group_id: int | None = None,
+) -> list[tuple[int, str, str, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
+                   u.fullname, u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='approved'
+              AND gm.group_id=?
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (group_id, end_date, start_date)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT a.user_id, a.category, a.start_date, a.end_date, a.comment,
+                   u.fullname, u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            WHERE a.status='approved'
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (end_date, start_date)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def list_approved_absences_for_date(
+    date_iso: str,
+    group_id: int | None = None,
+) -> list[tuple[int, str, str, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.status='approved'
+              AND gm.group_id=?
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (group_id, date_iso, date_iso)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            WHERE a.status='approved'
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (date_iso, date_iso)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def upsert_user_registration(tg_id: int, username: str, fullname: str) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM users WHERE telegram_id=?", (tg_id,))
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            """
+            UPDATE users
+            SET username=?, fullname=?, is_approved=0
+            WHERE telegram_id=?
+            """,
+            (username, fullname, tg_id)
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO users (telegram_id, username, fullname, is_approved, is_admin)
+            VALUES (?, ?, ?, 0, 0)
+            """,
+            (tg_id, username, fullname)
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_user_approval_status(tg_id: int) -> int | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT is_approved FROM users WHERE telegram_id=?", (tg_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
+def approve_user(tg_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET is_approved=1 WHERE telegram_id=?", (tg_id,))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def delete_user_and_related(tg_id: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM group_memberships WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM group_requests WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM absences WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM edit_requests WHERE user_id=?", (tg_id,))
+    cur.execute("UPDATE users SET last_group_id=NULL WHERE telegram_id=?", (tg_id,))
+    cur.execute("DELETE FROM users WHERE telegram_id=?", (tg_id,))
+    conn.commit()
+    conn.close()
+
+
+def list_pending_user_ids() -> list[int]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT telegram_id FROM users WHERE is_approved=0")
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def list_non_admin_approved_users() -> list[tuple[int, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT telegram_id, fullname
+        FROM users
+        WHERE is_approved=1
+            AND is_admin=0
+        ORDER BY fullname
+        """
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def list_admin_users(exclude_id: int | None = None) -> list[tuple[int, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if exclude_id is None:
+        cur.execute(
+            """
+            SELECT telegram_id, fullname
+            FROM users
+            WHERE is_admin=1
+            ORDER BY fullname
+            """
+        )
+    else:
+        cur.execute(
+            """
+            SELECT telegram_id, fullname
+            FROM users
+            WHERE is_admin=1
+              AND telegram_id != ?
+            ORDER BY fullname
+            """,
+            (exclude_id,)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def promote_to_admin(tg_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET is_approved=1, is_admin=1 WHERE telegram_id=?", (tg_id,))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def revoke_admin(tg_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET is_admin=0 WHERE telegram_id=?", (tg_id,))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def update_user_fullname(tg_id: int, fullname: str) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET fullname=? WHERE telegram_id=?", (fullname, tg_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def get_user_name_and_username(tg_id: int) -> tuple[str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT fullname, username FROM users WHERE telegram_id=?", (tg_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
