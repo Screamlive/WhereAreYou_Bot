@@ -271,6 +271,16 @@ def get_user_fullname(tg_id: int) -> str:
             return f"{fullname}"
     return f"User {tg_id}"
 
+def format_date_display(date_str: str | None) -> str:
+    if not date_str:
+        return "—"
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.datetime.strptime(date_str, fmt).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return date_str
+
 ###############################################################################
 # КНОПКИ (ReplyKeyboard)
 ###############################################################################
@@ -329,8 +339,7 @@ group_admin_select_menu = ReplyKeyboardMarkup(
 my_absences_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Добавить отсутствие")],
-        [KeyboardButton(text="Показать мои отсутствия")],
-        [KeyboardButton(text="Изменить отсутствие"), KeyboardButton(text="Удалить отсутствие")],
+        [KeyboardButton(text="Мои заявки")],
         [KeyboardButton(text=BACK_BUTTON_TEXT)]
     ],
     resize_keyboard=True
@@ -2465,8 +2474,11 @@ async def process_comment(message: types.Message, state: FSMContext):
     conn.commit()
     conn.close()
 
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
+
     await message.answer(
-        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd} по {ed}\n"
+        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd_disp} по {ed_disp}\n"
         f"Комментарий: {comment or '—'}\nОтправлена на рассмотрение."
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
@@ -2484,7 +2496,7 @@ async def process_comment(message: types.Message, state: FSMContext):
         ])
         text_admin = (
             f"{get_user_fullname(user_id)} добавил заявку #{abs_id}:\n"
-            f"{cat} {sd}–{ed}\n"
+            f"{cat} {sd_disp}–{ed_disp}\n"
             f"Комментарий: {comment or '—'} (pending)"
         )
         try:
@@ -2508,7 +2520,7 @@ class EditAbsenceFSM(StatesGroup):
     waiting_for_new_end_date = State()
     waiting_for_new_comment = State()
 
-@dp.message(lambda msg: msg.text == "Показать мои отсутствия")
+@dp.message(lambda msg: msg.text in {"Показать мои отсутствия", "Мои заявки"})
 async def show_my_absences(message: types.Message):
     user_id = message.from_user.id
     if not is_user_approved(user_id):
@@ -2536,7 +2548,9 @@ async def show_my_absences(message: types.Message):
     lines = []
     kb_rows = []
     for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        line = f"#{abs_id} — {cat}, {sd}–{ed}, статус={st}, коммент: {cmnt or '—'}"
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
+        line = f"#{abs_id} — {cat}, {sd_disp}–{ed_disp}, статус={st}, коммент: {cmnt or '—'}"
         lines.append(line)
         if st == "approved":
             kb_rows.append([
@@ -2780,6 +2794,8 @@ async def request_delete_absence(cb: CallbackQuery):
     admin_ids = set(get_admins())
     for gid, _name, _role in get_user_groups(user_id):
         admin_ids.update(get_group_admins(gid))
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -2789,7 +2805,7 @@ async def request_delete_absence(cb: CallbackQuery):
         ])
         txt = (
             f"{get_user_fullname(cb.from_user.id)} просит удалить "
-            f"заявку #{abs_id} ({cat} {sd}–{ed}, status={st})."
+            f"заявку #{abs_id} ({cat} {sd_disp}–{ed_disp}, status={st})."
         )
         try:
             await bot.send_message(admin_id, txt, reply_markup=kb)
@@ -2820,6 +2836,8 @@ async def request_edit_absence(cb: CallbackQuery, state: FSMContext):
         return
 
     user_id, cat, sd, ed, cmnt, st = row
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
     if user_id != cb.from_user.id:
         await cb.answer("Это не ваша заявка!", show_alert=True)
         return
@@ -2914,6 +2932,10 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         return
 
     old_cat, old_sd, old_ed, old_cmnt = old_row
+    old_sd_disp = format_date_display(old_sd)
+    old_ed_disp = format_date_display(old_ed)
+    new_sd_disp = format_date_display(new_sd)
+    new_ed_disp = format_date_display(new_ed)
 
     # 2) Записываем в edit_requests
     cur.execute("""
@@ -2927,13 +2949,13 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
     old_part = (
         f"Старое:\n"
         f"Категория: {old_cat}\n"
-        f"Даты: {old_sd}–{old_ed}\n"
+        f"Даты: {old_sd_disp}–{old_ed_disp}\n"
         f"Комментарий: {old_cmnt or '—'}\n\n"
     )
     new_part = (
         f"Новое:\n"
         f"Категория: {new_cat}\n"
-        f"Даты: {new_sd}–{new_ed}\n"
+        f"Даты: {new_sd_disp}–{new_ed_disp}\n"
         f"Комментарий: {comment or '—'}\n\n"
         f"(pending)"
     )
@@ -3030,12 +3052,12 @@ async def edit_approval_callback(cb: CallbackQuery):
         # Показываем «старое → новое» админу (при желании)
         old_text = (
             f"Старое:\nКатегория: {old_cat}\n"
-            f"Даты: {old_sd}–{old_ed}\n"
+            f"Даты: {old_sd_disp}–{old_ed_disp}\n"
             f"Комментарий: {old_cmnt or '—'}"
         )
         new_text = (
             f"Новое:\nКатегория: {new_cat}\n"
-            f"Даты: {new_sd}–{new_ed}\n"
+            f"Даты: {new_sd_disp}–{new_ed_disp}\n"
             f"Комментарий: {new_comment or '—'}"
         )
         summary = f"Изменение заявки #{abs_id} одобрено.\n\n{old_text}\n\n→ {new_text}"
@@ -3046,7 +3068,7 @@ async def edit_approval_callback(cb: CallbackQuery):
             await bot.send_message(
                 user_id,
                 f"Ваше изменение заявки #{abs_id} одобрено!\n"
-                f"Теперь: {new_cat}, {new_sd}–{new_ed}, {new_comment or '—'}"
+                f"Теперь: {new_cat}, {new_sd_disp}–{new_ed_disp}, {new_comment or '—'}"
             )
         except:
             pass
@@ -3100,6 +3122,8 @@ async def confirm_delete_absence(cb: CallbackQuery):
         return
 
     user_id, cat, sd, ed = row
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
         conn.close()
         await cb.answer("Нет прав!", show_alert=True)
@@ -3177,11 +3201,13 @@ async def show_absence_requests(message: types.Message):
     for row in rows:
         abs_id, uid, cat, sd, ed, cmnt = row
         user_disp = get_user_fullname(uid)
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
         text_info = (
             f"Заявка #{abs_id}\n"
             f"От: {user_disp}\n"
             f"Категория: {cat}\n"
-            f"Период: {sd}–{ed}\n"
+            f"Период: {sd_disp}–{ed_disp}\n"
             f"Комментарий: {cmnt or '—'}"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -3232,11 +3258,11 @@ async def callback_absence_approval(cb: CallbackQuery):
     if action == "approve_abs":
         new_status = "approved"
         txt_admin = f"Заявка #{abs_id} одобрена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd}–{ed}) одобрена!"
+        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) одобрена!"
     else:
         new_status = "declined"
         txt_admin = f"Заявка #{abs_id} отклонена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd}–{ed}) отклонена."
+        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) отклонена."
 
     cur.execute("UPDATE absences SET status=? WHERE id=?", (new_status, abs_id))
     conn.commit()
@@ -3337,7 +3363,9 @@ async def cb_show_absences(cb: CallbackQuery):
 
     text_report = f"Отсутствия {user_disp}:\n"
     for (cat, sd, ed, cmnt, st) in rows:
-        text_report += f"- {cat} {sd}–{ed}, [{st}], {cmnt or '—'}\n"
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
+        text_report += f"- {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
 
     await cb.message.answer(text_report)
     await cb.answer()
@@ -3418,7 +3446,9 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
     text_rep = f"Отсутствия {user_disp}:\n"
     kb_rows = []
     for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        text_rep += f"#{abs_id} {cat} {sd}–{ed}, [{st}], {cmnt or '—'}\n"
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
+        text_rep += f"#{abs_id} {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
         kb_rows.append([InlineKeyboardButton(
             text=f"Удалить #{abs_id}",
             callback_data=f"adm_del_abs:{abs_id}"
@@ -3459,11 +3489,11 @@ async def admin_delete_absence_final(cb: CallbackQuery):
     conn.commit()
     conn.close()
 
-    await cb.message.answer(f"Отсутствие #{abs_id} ({cat} {sd}–{ed}) удалено админом.")
+    await cb.message.answer(f"Отсутствие #{abs_id} ({cat} {sd_disp}–{ed_disp}) удалено админом.")
     log_action(cb.from_user.id, f"adm_del_abs {abs_id}")
 
     try:
-        await bot.send_message(user_id, f"Админ удалил ваше отсутствие #{abs_id} ({cat} {sd}–{ed}).")
+        await bot.send_message(user_id, f"Админ удалил ваше отсутствие #{abs_id} ({cat} {sd_disp}–{ed_disp}).")
     except:
         pass
 
@@ -3576,7 +3606,9 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
     await state.update_data(target_user_id=user_id)
     kb_rows = []
     for abs_id, cat, sd, ed, cmnt, st in rows:
-        label = f"#{abs_id} {cat} {sd}–{ed} [{st}]"
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
+        label = f"#{abs_id} {cat} {sd_disp}–{ed_disp} [{st}]"
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_abs:{abs_id}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await cb.message.answer("Выберите заявку для изменения:", reply_markup=inline_kb)
@@ -3616,6 +3648,8 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
         return
 
     target_user_id, cat, sd, ed, cmnt, st = row
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(target_user_id, group_id):
         await cb.answer("Нет прав!", show_alert=True)
         return
@@ -3633,7 +3667,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
         ]
     ])
     await cb.message.answer(
-        f"Текущие данные: {cat} {sd}–{ed}, коммент: {cmnt or '—'}, статус={st}\n"
+        f"Текущие данные: {cat} {sd_disp}–{ed_disp}, коммент: {cmnt or '—'}, статус={st}\n"
         f"Выберите новую категорию (можно выбрать ту же):",
         reply_markup=kb
     )
@@ -3713,6 +3747,10 @@ async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
         return
 
     old_cat, old_sd, old_ed, old_cmnt, old_status = old_row
+    old_sd_disp = format_date_display(old_sd)
+    old_ed_disp = format_date_display(old_ed)
+    new_sd_disp = format_date_display(new_sd)
+    new_ed_disp = format_date_display(new_ed)
     cur.execute("""
         UPDATE absences
         SET category=?, start_date=?, end_date=?, comment=?
@@ -3723,15 +3761,15 @@ async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
 
     await message.answer(
         f"Заявка #{abs_id} обновлена.\n"
-        f"Было: {old_cat} {old_sd}–{old_ed}, {old_cmnt or '—'}\n"
-        f"Стало: {new_cat} {new_sd}–{new_ed}, {comment or '—'}"
+        f"Было: {old_cat} {old_sd_disp}–{old_ed_disp}, {old_cmnt or '—'}\n"
+        f"Стало: {new_cat} {new_sd_disp}–{new_ed_disp}, {comment or '—'}"
     )
 
     try:
         await bot.send_message(
             target_user_id,
             f"Администратор изменил вашу заявку #{abs_id}.\n"
-            f"Теперь: {new_cat} {new_sd}–{new_ed}, {comment or '—'}"
+            f"Теперь: {new_cat} {new_sd_disp}–{new_ed_disp}, {comment or '—'}"
         )
     except:
         pass
@@ -3825,6 +3863,8 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     await state.update_data(end_date=str(end_date_obj))
     sds = str(start_date_obj)
     eds = str(end_date_obj)
+    sds_disp = format_date_display(sds)
+    eds_disp = format_date_display(eds)
 
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -3859,7 +3899,7 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     logging.debug(f"Found {len(rows)} rows for CSV export from {sds} to {eds}")
 
     if not rows:
-        await message.answer(f"Нет 'approved' отсутствий в период {sds}–{eds}.")
+        await message.answer(f"Нет 'approved' отсутствий в период {sds_disp}–{eds_disp}.")
         await state.clear()
         return
 
@@ -3873,7 +3913,9 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
             user_str = f"{fname} (@{uname})"
         else:
             user_str = f"{fname}"
-        lines.append(f"{user_str};{uname or ''};{cat};{sd};{ed};{cmnt_esc}")
+        sd_disp = format_date_display(sd)
+        ed_disp = format_date_display(ed)
+        lines.append(f"{user_str};{uname or ''};{cat};{sd_disp};{ed_disp};{cmnt_esc}")
 
     logging.debug(f"CSV lines count (including header): {len(lines)}")
 
@@ -3884,7 +3926,7 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     csv_bytes = bom + csv_text.encode('utf-8')
     buf = BytesIO(csv_bytes)
     buf.seek(0)
-    input_file = BufferedInputFile(buf.getvalue(), filename=f"absences_{sds}_{eds}.csv")
+    input_file = BufferedInputFile(buf.getvalue(), filename=f"absences_{sds_disp}_{eds_disp}.csv")
 
     await message.answer_document(document=input_file, caption="CSV-выгрузка.")
 
@@ -3974,9 +4016,8 @@ async def show_absences_today(message: types.Message):
     lines = []
     for (uid, category, sd, ed, cmnt, fullname, username) in rows:
         
-        # Преобразуем 'YYYY-MM-DD' -> 'дд.мм.гггг'
-        start_disp = datetime.datetime.strptime(sd, "%Y-%m-%d").strftime("%d.%m.%Y")
-        end_disp = datetime.datetime.strptime(ed, "%Y-%m-%d").strftime("%d.%m.%Y")
+        start_disp = format_date_display(sd)
+        end_disp = format_date_display(ed)
         
         # Если нужно вывести username, можно добавить "(@username)"
         user_str = fullname  # + (f" (@{username})" if username else "")
@@ -4163,6 +4204,8 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     category = data["category"]
     sd = data["start_date"]
     ed = data["end_date"]
+    sd_disp = format_date_display(sd)
+    ed_disp = format_date_display(ed)
 
     # Можно задать статус='pending' или сразу 'approved', как хотите
     conn = sqlite3.connect(DB_NAME)
@@ -4176,8 +4219,8 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     conn.close()
 
     await message.answer(
-        f"Отсутствие #{abs_id} добавлено сотруднику {get_user_fullname(target_user_id)}.\n"
-        f"Категория: {category}, {sd}–{ed}\nКомментарий: {comment or '—'}\nСтатус: pending."
+        f"Отсутствие #{abs_id} добавлено пользователю {get_user_fullname(target_user_id)}.\n"
+        f"Категория: {category}, {sd_disp}–{ed_disp}\nКомментарий: {comment or '—'}\nСтатус: pending."
     )
     log_action(message.from_user.id, f"AddAbsForAnother user={target_user_id}, abs_id={abs_id}")
 
@@ -4185,7 +4228,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     try:
         await bot.send_message(
             target_user_id,
-            f"Вам добавлено отсутствие #{abs_id} ({category}, {sd}–{ed}) от другого пользователя.\n"
+            f"Вам добавлено отсутствие #{abs_id} ({category}, {sd_disp}–{ed_disp}) от другого пользователя.\n"
             f"Комментарий: {comment or '—'}\n(статус: pending)"
         )
     except:
@@ -4209,7 +4252,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
         text_admin = (
             f"{get_user_fullname(user_id)} добавил заявку #{abs_id} "
             f"ДЛЯ {get_user_fullname(target_user_id)}:\n"
-            f"{category} {sd}–{ed}\n"
+            f"{category} {sd_disp}–{ed_disp}\n"
             f"Комментарий: {comment or '—'} (pending)"
         )
         try:
@@ -4273,21 +4316,6 @@ async def back_to_menu(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Возвращаю вас в меню.", reply_markup=get_role_menu(message.from_user.id))
 
-###############################################################################
-# Fallback
-###############################################################################
-@dp.message()
-async def fallback_handler(message: types.Message):
-    tg_id = message.from_user.id
-    if not user_exists_in_db(tg_id):
-        await message.answer("Вы не зарегистрированы. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
-        return
-    if not is_user_approved(tg_id):
-        await message.answer("Ваш аккаунт не одобрен. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
-        return
-
-    await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=get_role_menu(tg_id))
-
 #######################
 # Глобальный хендлер "Отмена" (Reply-кнопка)
 ###############################
@@ -4303,6 +4331,21 @@ async def cancel_process(message: types.Message, state: FSMContext):
         "Операция отменена. Возвращаю вас в меню.",
         reply_markup=get_role_menu(message.from_user.id)
     )
+
+###############################################################################
+# Fallback
+###############################################################################
+@dp.message()
+async def fallback_handler(message: types.Message):
+    tg_id = message.from_user.id
+    if not user_exists_in_db(tg_id):
+        await message.answer("Вы не зарегистрированы. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
+        return
+    if not is_user_approved(tg_id):
+        await message.answer("Ваш аккаунт не одобрен. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
+        return
+
+    await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=get_role_menu(tg_id))
 
 ###############################################################################
 # Запуск
