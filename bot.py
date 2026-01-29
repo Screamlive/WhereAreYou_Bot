@@ -53,6 +53,51 @@ from texts import (
     TEXT_NOT_APPROVED,
     TEXT_CANCELLED,
     TEXT_BACK_TO_MENU,
+    TEXT_UNKNOWN_COMMAND,
+    TEXT_CANCEL_BUTTON,
+    TEXT_CANCEL_HINT,
+    TEXT_CANCEL_HINT_GENERIC,
+    TEXT_SELECT_USER,
+    TEXT_SELECT_GROUP,
+    TEXT_GROUPS_NOT_FOUND,
+    TEXT_USERS_NOT_FOUND,
+    TEXT_NO_APPROVED_USERS,
+    TEXT_NO_APPROVED_EMPLOYEES,
+    TEXT_GROUP_NO_USERS,
+    TEXT_GROUP_NOT_FOUND,
+    TEXT_GROUP_NOT_SELECTED,
+    TEXT_INVALID_GROUP,
+    TEXT_INVALID_USER,
+    TEXT_USER_NOT_FOUND,
+    TEXT_REQUEST_NOT_FOUND,
+    TEXT_ORIGINAL_REQUEST_NOT_FOUND,
+    TEXT_EMPTY_VALUE,
+    TEXT_REQUEST_APPROVED,
+    TEXT_END_DATE_BEFORE_START,
+    TEXT_INVALID_DATE_FORMAT,
+    TEXT_INVALID_DATE_TRY_AGAIN,
+    TEXT_ENTER_END_DATE,
+    TEXT_ENTER_NEW_START_DATE,
+    TEXT_ENTER_NEW_END_DATE,
+    TEXT_ENTER_COMMENT,
+    TEXT_ENTER_NEW_COMMENT,
+    TEXT_SELECT_ABSENCE_CATEGORY,
+    TEXT_NO_GROUPS_YET,
+    TEXT_NOT_IN_ANY_GROUP,
+    TEXT_REQUEST_ALREADY_PENDING,
+    TEXT_NOT_YOUR_REQUEST,
+    TEXT_CANNOT_DELETE_SELF,
+    TEXT_USER_ALREADY_GROUP_ADMIN,
+    TEXT_USER_NOT_IN_GROUP,
+    TEXT_WORK_GROUP_RESET_GLOBAL,
+    TEXT_MENU_UPDATED,
+    TEXT_INVALID_REQUEST,
+    TEXT_NOT_APPROVED_SHORT,
+    TEXT_NOT_REGISTERED_SHORT,
+    TEXT_NOT_REGISTERED_LONG,
+    TEXT_ENTER_PERIOD_START_OR_CANCEL,
+    TEXT_ENTER_PERIOD_END_OR_CANCEL,
+    TEXT_SECTION_GROUPS,
 )
 
 ###############################################################################
@@ -396,21 +441,21 @@ async def open_groups_menu(message: types.Message):
         await message.answer("Используйте раздел «Управление группами».")
         return
     if not user_has_any_group(tg_id):
-        await message.answer("Раздел «Группы».", reply_markup=no_group_groups_menu)
+        await message.answer(TEXT_SECTION_GROUPS, reply_markup=no_group_groups_menu)
         return
     if user_is_group_admin_any(tg_id):
         admin_groups = get_admin_groups(tg_id)
         if len(admin_groups) == 1:
-            await message.answer("Раздел «Группы».", reply_markup=group_admin_groups_menu_single)
+            await message.answer(TEXT_SECTION_GROUPS, reply_markup=group_admin_groups_menu_single)
         else:
-            await message.answer("Раздел «Группы».", reply_markup=group_admin_groups_menu)
+            await message.answer(TEXT_SECTION_GROUPS, reply_markup=group_admin_groups_menu)
         return
-    await message.answer("Раздел «Группы».", reply_markup=user_groups_menu)
+    await message.answer(TEXT_SECTION_GROUPS, reply_markup=user_groups_menu)
 
 @dp.message(lambda msg: msg.text == "Отсутствия для другого пользователя")
 async def open_other_absences_menu(message: types.Message):
     if not is_user_approved(message.from_user.id):
-        await message.answer("Ваш аккаунт не одобрен.")
+        await message.answer(TEXT_NOT_APPROVED_SHORT)
         return
     await message.answer("Раздел «Отсутствия для другого пользователя».", reply_markup=user_other_absences_menu)
 
@@ -448,7 +493,7 @@ async def cmd_start(message: types.Message):
 
     if not user_exists_in_db(tg_id):
         await message.answer(
-            "Вы не зарегистрированы! Нажмите «Зарегистрироваться», чтобы подать заявку.",
+            TEXT_NOT_REGISTERED_LONG,
             reply_markup=not_approved_menu
         )
         return
@@ -529,7 +574,7 @@ async def register_via_button(message: types.Message, state: FSMContext):
 async def process_fullname(message: types.Message, state: FSMContext):
     fullname = message.text.strip()
     if not fullname:
-        await message.answer("Пустое значение. Попробуйте снова.")
+        await message.answer(TEXT_EMPTY_VALUE)
         return
 
     tg_id = message.from_user.id
@@ -597,7 +642,7 @@ async def inline_approve_user(cb: CallbackQuery):
     cur.execute("SELECT is_approved FROM users WHERE telegram_id=?", (user_id,))
     row = cur.fetchone()
     if not row:
-        await cb.answer("Пользователь не найден.", show_alert=True)
+        await cb.answer(TEXT_USER_NOT_FOUND, show_alert=True)
         conn.close()
         return
 
@@ -617,9 +662,9 @@ async def inline_approve_user(cb: CallbackQuery):
 
         try:
             if is_user_admin(user_id):
-                await bot.send_message(user_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(user_id))
+                await bot.send_message(user_id, TEXT_REQUEST_APPROVED, reply_markup=get_role_menu(user_id))
             else:
-                await bot.send_message(user_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(user_id))
+                await bot.send_message(user_id, TEXT_REQUEST_APPROVED, reply_markup=get_role_menu(user_id))
         except:
             pass
 
@@ -653,12 +698,11 @@ async def cmd_approve(message: types.Message):
 
     # Cancel KB
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
-        "Сейчас вы удаляете сотрудника.\n"
-        "Если передумали, нажмите «Отмена».",
+        f"Сейчас вы удаляете сотрудника.\n{TEXT_CANCEL_HINT}",
         reply_markup=cancel_kb
     )
 
@@ -682,9 +726,9 @@ async def cmd_approve(message: types.Message):
     log_action(message.from_user.id, f"approve {target_id}")
     try:
         if is_user_admin(target_id):
-            await bot.send_message(target_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(target_id))
+            await bot.send_message(target_id, TEXT_REQUEST_APPROVED, reply_markup=get_role_menu(target_id))
         else:
-            await bot.send_message(target_id, "Ваш запрос одобрен!", reply_markup=get_role_menu(target_id))
+            await bot.send_message(target_id, TEXT_REQUEST_APPROVED, reply_markup=get_role_menu(target_id))
     except:
         pass
 
@@ -764,7 +808,7 @@ async def list_approved_users(message: types.Message):
     if group_id:
         members = get_group_members(group_id)
         if not members:
-            await message.answer("В группе нет сотрудников.")
+            await message.answer(TEXT_GROUP_NO_USERS)
             return
         text_list = "Сотрудники группы:\n"
         for uid, fullname, username, role in members:
@@ -787,7 +831,7 @@ async def list_approved_users(message: types.Message):
     conn.close()
 
     if not rows:
-        await message.answer("Нет одобренных сотрудников.")
+        await message.answer(TEXT_NO_APPROVED_EMPLOYEES)
         return
 
     text_list = "Одобренные сотрудники:\n"
@@ -848,7 +892,7 @@ async def create_group_start(message: types.Message, state: FSMContext):
 
     await state.clear()
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer("Введите название группы:", reply_markup=cancel_kb)
@@ -887,7 +931,7 @@ async def list_groups(message: types.Message):
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     text = "Группы:\n" + "\n".join([f"- {name} (ID={gid})" for gid, name in groups])
@@ -904,7 +948,7 @@ async def delete_group_start(message: types.Message):
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     kb_rows = []
@@ -922,17 +966,17 @@ async def delete_group_confirm(cb: CallbackQuery):
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     group_name = get_group_name(group_id)
     if not group_name:
-        await cb.answer("Группа не найдена.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Удалить группу", callback_data=f"del_group_confirm:{group_id}"),
-        InlineKeyboardButton(text="Отмена", callback_data="del_group_cancel")
+        InlineKeyboardButton(text=TEXT_CANCEL_BUTTON, callback_data="del_group_cancel")
     ]])
     await cb.message.answer(
         f"Подтвердите удаление группы «{group_name}».",
@@ -949,12 +993,12 @@ async def delete_group_confirmed(cb: CallbackQuery):
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     group_name = get_group_name(group_id)
     if not group_name:
-        await cb.answer("Группа не найдена.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -995,7 +1039,7 @@ async def superadmin_change_name_start(message: types.Message, state: FSMContext
 
     users = get_all_users()
     if not users:
-        await message.answer("Пользователи не найдены.")
+        await message.answer(TEXT_USERS_NOT_FOUND)
         return
 
     await state.clear()
@@ -1006,7 +1050,7 @@ async def superadmin_change_name_start(message: types.Message, state: FSMContext
             label += f" (@{username})"
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"sa_name_user:{uid}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
     await state.set_state(SuperadminChangeNameFSM.waiting_for_user)
 
 
@@ -1015,7 +1059,7 @@ async def superadmin_change_name_pick_user(cb: CallbackQuery, state: FSMContext)
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     await state.update_data(user_id=user_id)
@@ -1028,7 +1072,7 @@ async def superadmin_change_name_pick_user(cb: CallbackQuery, state: FSMContext)
 async def superadmin_change_name_finish(message: types.Message, state: FSMContext):
     new_name = message.text.strip()
     if not new_name:
-        await message.answer("Пустое значение. Попробуйте снова.")
+        await message.answer(TEXT_EMPTY_VALUE)
         return
 
     data = await state.get_data()
@@ -1046,7 +1090,7 @@ async def superadmin_change_name_finish(message: types.Message, state: FSMContex
     conn.close()
 
     if not updated:
-        await message.answer("Пользователь не найден.")
+        await message.answer(TEXT_USER_NOT_FOUND)
         await state.clear()
         return
 
@@ -1067,7 +1111,7 @@ async def superadmin_show_username_start(message: types.Message, state: FSMConte
 
     users = get_all_users()
     if not users:
-        await message.answer("Пользователи не найдены.")
+        await message.answer(TEXT_USERS_NOT_FOUND)
         return
 
     await state.clear()
@@ -1078,7 +1122,7 @@ async def superadmin_show_username_start(message: types.Message, state: FSMConte
             label += f" (@{username})"
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"sa_uname_user:{uid}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
     await state.set_state(SuperadminShowUsernameFSM.waiting_for_user)
 
 
@@ -1087,7 +1131,7 @@ async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContex
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1097,7 +1141,7 @@ async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContex
     conn.close()
 
     if not row:
-        await cb.answer("Пользователь не найден.", show_alert=True)
+        await cb.answer(TEXT_USER_NOT_FOUND, show_alert=True)
         await state.clear()
         return
 
@@ -1119,7 +1163,7 @@ async def superadmin_delete_user_start(message: types.Message):
 
     users = get_all_users()
     if not users:
-        await message.answer("Пользователи не найдены.")
+        await message.answer(TEXT_USERS_NOT_FOUND)
         return
 
     kb_rows = []
@@ -1140,17 +1184,17 @@ async def superadmin_delete_user_confirm(cb: CallbackQuery):
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     if user_id == cb.from_user.id:
-        await cb.answer("Нельзя удалить самого себя.", show_alert=True)
+        await cb.answer(TEXT_CANNOT_DELETE_SELF, show_alert=True)
         return
 
     fullname = get_user_fullname(user_id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Удалить", callback_data=f"del_bot_user_confirm:{user_id}"),
-        InlineKeyboardButton(text="Отмена", callback_data="del_bot_user_cancel")
+        InlineKeyboardButton(text=TEXT_CANCEL_BUTTON, callback_data="del_bot_user_cancel")
     ]])
     await cb.message.answer(
         f"Подтвердите удаление пользователя: {fullname}",
@@ -1167,11 +1211,11 @@ async def superadmin_delete_user_execute(cb: CallbackQuery):
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     if user_id == cb.from_user.id:
-        await cb.answer("Нельзя удалить самого себя.", show_alert=True)
+        await cb.answer(TEXT_CANNOT_DELETE_SELF, show_alert=True)
         return
 
     fullname = get_user_fullname(user_id)
@@ -1214,15 +1258,15 @@ async def assign_group_admin_start(message: types.Message, state: FSMContext):
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     await state.clear()
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
-    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+    await message.answer(TEXT_SELECT_GROUP, reply_markup=cancel_kb)
 
     kb_rows = []
     for gid, name in groups:
@@ -1237,14 +1281,14 @@ async def assign_group_admin_pick_group(cb: CallbackQuery, state: FSMContext):
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     await state.update_data(group_id=group_id)
 
     users = get_approved_users()
     if not users:
-        await cb.message.answer("Нет одобренных пользователей.")
+        await cb.message.answer(TEXT_NO_APPROVED_USERS)
         await cb.answer()
         await state.clear()
         return
@@ -1257,7 +1301,7 @@ async def assign_group_admin_pick_group(cb: CallbackQuery, state: FSMContext):
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"ga_user:{uid}")])
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await cb.message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await cb.message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
     await state.set_state(GroupAdminAssignFSM.waiting_for_user)
     await cb.answer()
 
@@ -1267,14 +1311,14 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     group_id = data.get("group_id")
     if not group_id:
-        await cb.answer("Группа не выбрана.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
         await state.clear()
         return
 
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1288,7 +1332,7 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
 
     if row:
         if row[0] == "admin":
-            msg = "Пользователь уже админ этой группы."
+            msg = TEXT_USER_ALREADY_GROUP_ADMIN
         else:
             cur.execute("""
                 UPDATE group_memberships
@@ -1305,7 +1349,7 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
                 )
                 await bot.send_message(
                     user_id,
-                    "Меню обновлено.",
+                    TEXT_MENU_UPDATED,
                     reply_markup=get_role_menu(user_id)
                 )
             except:
@@ -1325,7 +1369,7 @@ async def assign_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
             )
             await bot.send_message(
                 user_id,
-                "Меню обновлено.",
+                TEXT_MENU_UPDATED,
                 reply_markup=get_role_menu(user_id)
             )
         except:
@@ -1350,15 +1394,15 @@ async def revoke_group_admin_start(message: types.Message, state: FSMContext):
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     await state.clear()
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
-    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+    await message.answer(TEXT_SELECT_GROUP, reply_markup=cancel_kb)
 
     kb_rows = []
     for gid, name in groups:
@@ -1373,7 +1417,7 @@ async def revoke_group_admin_pick_group(cb: CallbackQuery, state: FSMContext):
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     await state.update_data(group_id=group_id)
@@ -1413,14 +1457,14 @@ async def revoke_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     group_id = data.get("group_id")
     if not group_id:
-        await cb.answer("Группа не выбрана.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
         await state.clear()
         return
 
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1474,15 +1518,15 @@ async def add_user_to_group_start(message: types.Message, state: FSMContext):
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     await state.clear()
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
-    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+    await message.answer(TEXT_SELECT_GROUP, reply_markup=cancel_kb)
 
     kb_rows = []
     for gid, name in groups:
@@ -1497,14 +1541,14 @@ async def add_user_to_group_pick_group(cb: CallbackQuery, state: FSMContext):
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     await state.update_data(group_id=group_id)
 
     users = get_approved_users()
     if not users:
-        await cb.message.answer("Нет одобренных пользователей.")
+        await cb.message.answer(TEXT_NO_APPROVED_USERS)
         await cb.answer()
         await state.clear()
         return
@@ -1517,7 +1561,7 @@ async def add_user_to_group_pick_group(cb: CallbackQuery, state: FSMContext):
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gm_user:{uid}")])
 
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await cb.message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await cb.message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
     await state.set_state(GroupAddUserFSM.waiting_for_user)
     await cb.answer()
 
@@ -1527,14 +1571,14 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     group_id = data.get("group_id")
     if not group_id:
-        await cb.answer("Группа не выбрана.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
         await state.clear()
         return
 
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1548,7 +1592,7 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
 
     if row:
         if row[0] == "admin":
-            msg = "Пользователь уже админ этой группы."
+            msg = TEXT_USER_ALREADY_GROUP_ADMIN
         else:
             msg = "Пользователь уже состоит в группе."
     else:
@@ -1566,7 +1610,7 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
             )
             await bot.send_message(
                 user_id,
-                "Меню обновлено.",
+                TEXT_MENU_UPDATED,
                 reply_markup=get_role_menu(user_id)
             )
         except:
@@ -1591,15 +1635,15 @@ async def remove_user_from_group_start(message: types.Message, state: FSMContext
 
     groups = list_all_groups()
     if not groups:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     await state.clear()
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
-    await message.answer("Выберите группу:", reply_markup=cancel_kb)
+    await message.answer(TEXT_SELECT_GROUP, reply_markup=cancel_kb)
 
     kb_rows = []
     for gid, name in groups:
@@ -1614,7 +1658,7 @@ async def remove_user_from_group_pick_group(cb: CallbackQuery, state: FSMContext
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     await state.update_data(group_id=group_id)
@@ -1646,14 +1690,14 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
     data = await state.get_data()
     group_id = data.get("group_id")
     if not group_id:
-        await cb.answer("Группа не выбрана.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
         await state.clear()
         return
 
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1672,7 +1716,7 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
     conn.close()
 
     if not deleted:
-        await cb.message.answer("Пользователь не найден в группе.", reply_markup=get_role_menu(cb.from_user.id))
+        await cb.message.answer(TEXT_USER_NOT_IN_GROUP, reply_markup=get_role_menu(cb.from_user.id))
         await cb.answer()
         await state.clear()
         return
@@ -1768,7 +1812,7 @@ async def handle_group_request(cb: CallbackQuery):
     try:
         req_id = int(req_id_str)
     except ValueError:
-        await cb.answer("Некорректная заявка.", show_alert=True)
+        await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1781,7 +1825,7 @@ async def handle_group_request(cb: CallbackQuery):
     row = cur.fetchone()
     if not row:
         conn.close()
-        await cb.answer("Заявка не найдена.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
 
     req_user_id, group_id, req_type, status = row
@@ -1884,7 +1928,7 @@ async def change_work_group(message: types.Message):
         allow_global = False
 
     if not groups and not allow_global:
-        await message.answer("Группы не найдены.")
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
         return
 
     kb_rows = []
@@ -1903,7 +1947,7 @@ async def set_work_group_global(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
     set_last_group_id(message.from_user.id, None)
-    await message.answer("Рабочая группа сброшена. Режим: глобально.", reply_markup=get_role_menu(message.from_user.id))
+    await message.answer(TEXT_WORK_GROUP_RESET_GLOBAL, reply_markup=get_role_menu(message.from_user.id))
 
 
 @dp.message(lambda msg: msg.text == "Выбрать группу")
@@ -1921,14 +1965,14 @@ async def set_work_group(cb: CallbackQuery):
             await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
             return
         set_last_group_id(user_id, None)
-        await cb.message.answer("Рабочая группа сброшена. Режим: глобально.")
+        await cb.message.answer(TEXT_WORK_GROUP_RESET_GLOBAL)
         await cb.answer()
         return
 
     try:
         group_id = int(payload)
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
@@ -1937,16 +1981,16 @@ async def set_work_group(cb: CallbackQuery):
 
     group_name = get_group_name(group_id)
     if not group_name:
-        await cb.answer("Группа не найдена.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
     if not set_last_group_id(user_id, group_id):
-        await cb.answer("Пользователь не найден.", show_alert=True)
+        await cb.answer(TEXT_USER_NOT_FOUND, show_alert=True)
         return
 
     await cb.message.answer(f"Рабочая группа установлена: {group_name}")
     # Обновим меню после выбора группы
-    await cb.message.answer("Меню обновлено.", reply_markup=get_role_menu(user_id))
+    await cb.message.answer(TEXT_MENU_UPDATED, reply_markup=get_role_menu(user_id))
     await cb.answer()
 
 ###############################################################################
@@ -2125,7 +2169,7 @@ async def remove_user_prompt(message: types.Message):
 
     # NEW: кнопка «Отмена»
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
@@ -2135,7 +2179,7 @@ async def remove_user_prompt(message: types.Message):
 
     members = get_group_members(group_id)
     if not members:
-        await message.answer("В группе нет сотрудников.")
+        await message.answer(TEXT_GROUP_NO_USERS)
         return
 
     kb_rows = []
@@ -2165,7 +2209,7 @@ async def callback_remove_user(cb: CallbackQuery):
 
     user_id = int(cb.data.split(":")[1])
     if not user_in_group(user_id, group_id):
-        await cb.answer("Пользователь не найден в группе.", show_alert=True)
+        await cb.answer(TEXT_USER_NOT_IN_GROUP, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2204,27 +2248,26 @@ class AbsenceRequestFSM(StatesGroup):
 @dp.message(lambda msg: msg.text == "Добавить отсутствие")
 async def add_absence_start(message: types.Message, state: FSMContext):
     if not user_exists_in_db(message.from_user.id):
-        await message.answer("Вы не зарегистрированы.")
+        await message.answer(TEXT_NOT_REGISTERED_SHORT)
         return
     if not is_user_approved(message.from_user.id):
-        await message.answer("Ваш аккаунт не одобрен.")
+        await message.answer(TEXT_NOT_APPROVED_SHORT)
         return
     if not is_superadmin(message.from_user.id) and not user_has_any_group(message.from_user.id):
-        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        await message.answer(TEXT_NOT_IN_ANY_GROUP)
         return
 
     # 1) Создадим Reply-клавиатуру с кнопкой «Отмена»
     cancel_kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Отмена")]
+            [KeyboardButton(text=TEXT_CANCEL_BUTTON)]
         ],
         resize_keyboard=True
     )
 
     # 2) Сообщим пользователю, что можно прервать действие
     await message.answer(
-        "Сейчас вы добавляете отсутствие.\n"
-        "Если ошиблись, нажмите «Отмена», чтобы прервать.",
+        f"Сейчас вы добавляете отсутствие.\n{TEXT_CANCEL_HINT_GENERIC}",
         reply_markup=cancel_kb
     )
 
@@ -2240,7 +2283,7 @@ async def add_absence_start(message: types.Message, state: FSMContext):
         ]
     ])
     await message.answer(
-        "Выберите категорию отсутствия:",
+        TEXT_SELECT_ABSENCE_CATEGORY,
         reply_markup=kb
     )
 
@@ -2260,11 +2303,11 @@ async def process_start_date(message: types.Message, state: FSMContext):
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        await message.answer(TEXT_INVALID_DATE_FORMAT)
         return
 
     await state.update_data(start_date=str(date_obj))
-    await message.answer("Введите дату окончания (дд.мм.гггг):")
+    await message.answer(TEXT_ENTER_END_DATE)
     await state.set_state(AbsenceRequestFSM.waiting_for_end_date)
 
 @dp.message(AbsenceRequestFSM.waiting_for_end_date)
@@ -2280,11 +2323,11 @@ async def process_end_date(message: types.Message, state: FSMContext):
     start_date_str = data["start_date"]
     start_date_obj = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
     if date_obj < start_date_obj:
-        await message.answer("Дата окончания не может быть раньше даты начала.")
+        await message.answer(TEXT_END_DATE_BEFORE_START)
         return
 
     await state.update_data(end_date=str(date_obj))
-    await message.answer("Введите комментарий (или '-' если без комментария):")
+    await message.answer(TEXT_ENTER_COMMENT)
     await state.set_state(AbsenceRequestFSM.waiting_for_comment)
 
 @dp.message(AbsenceRequestFSM.waiting_for_comment)
@@ -2362,7 +2405,7 @@ async def show_my_absences(message: types.Message):
         await message.answer("Вы не одобрены.")
         return
     if not is_superadmin(user_id) and not user_has_any_group(user_id):
-        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        await message.answer(TEXT_NOT_IN_ANY_GROUP)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2411,12 +2454,12 @@ async def show_my_absences(message: types.Message):
 async def show_my_groups(message: types.Message):
     user_id = message.from_user.id
     if not user_exists_in_db(user_id):
-        await message.answer("Вы не зарегистрированы.")
+        await message.answer(TEXT_NOT_REGISTERED_SHORT)
         return
 
     groups = get_user_groups(user_id)
     if not groups:
-        await message.answer("Вы пока не состоите ни в одной группе.")
+        await message.answer(TEXT_NO_GROUPS_YET)
         return
 
     lines = []
@@ -2431,10 +2474,10 @@ async def show_my_groups(message: types.Message):
 async def request_join_group_start(message: types.Message):
     user_id = message.from_user.id
     if not user_exists_in_db(user_id):
-        await message.answer("Вы не зарегистрированы.")
+        await message.answer(TEXT_NOT_REGISTERED_SHORT)
         return
     if not is_user_approved(user_id):
-        await message.answer("Ваш аккаунт не одобрен.")
+        await message.answer(TEXT_NOT_APPROVED_SHORT)
         return
 
     groups = list_all_groups()
@@ -2453,18 +2496,18 @@ async def request_join_group_start(message: types.Message):
 async def request_join_group(cb: CallbackQuery):
     user_id = cb.from_user.id
     if not is_user_approved(user_id):
-        await cb.answer("Ваш аккаунт не одобрен.", show_alert=True)
+        await cb.answer(TEXT_NOT_APPROVED_SHORT, show_alert=True)
         return
 
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     group_name = get_group_name(group_id)
     if not group_name:
-        await cb.answer("Группа не найдена.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
     if user_in_group(user_id, group_id):
@@ -2472,7 +2515,7 @@ async def request_join_group(cb: CallbackQuery):
         return
 
     if has_pending_group_request(user_id, group_id, "join"):
-        await cb.answer("Заявка уже отправлена и ожидает решения.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_ALREADY_PENDING, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2509,15 +2552,15 @@ async def request_join_group(cb: CallbackQuery):
 async def request_leave_group_start(message: types.Message):
     user_id = message.from_user.id
     if not user_exists_in_db(user_id):
-        await message.answer("Вы не зарегистрированы.")
+        await message.answer(TEXT_NOT_REGISTERED_SHORT)
         return
     if not is_user_approved(user_id):
-        await message.answer("Ваш аккаунт не одобрен.")
+        await message.answer(TEXT_NOT_APPROVED_SHORT)
         return
 
     groups = get_user_groups(user_id)
     if not groups:
-        await message.answer("Вы пока не состоите ни в одной группе.")
+        await message.answer(TEXT_NO_GROUPS_YET)
         return
 
     kb_rows = []
@@ -2531,18 +2574,18 @@ async def request_leave_group_start(message: types.Message):
 async def request_leave_group(cb: CallbackQuery):
     user_id = cb.from_user.id
     if not is_user_approved(user_id):
-        await cb.answer("Ваш аккаунт не одобрен.", show_alert=True)
+        await cb.answer(TEXT_NOT_APPROVED_SHORT, show_alert=True)
         return
 
     try:
         group_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная группа.", show_alert=True)
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
     group_name = get_group_name(group_id)
     if not group_name:
-        await cb.answer("Группа не найдена.", show_alert=True)
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
         return
 
     if not user_in_group(user_id, group_id):
@@ -2550,7 +2593,7 @@ async def request_leave_group(cb: CallbackQuery):
         return
 
     if has_pending_group_request(user_id, group_id, "leave"):
-        await cb.answer("Заявка уже отправлена и ожидает решения.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_ALREADY_PENDING, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2619,7 +2662,7 @@ async def request_delete_absence(cb: CallbackQuery):
 
     user_id, cat, sd, ed, st = row
     if user_id != cb.from_user.id:
-        await cb.answer("Это не ваша заявка!", show_alert=True)
+        await cb.answer(TEXT_NOT_YOUR_REQUEST, show_alert=True)
         return
     if st != "approved":
         await cb.answer("Удалять можно только 'approved'.", show_alert=True)
@@ -2667,14 +2710,14 @@ async def request_edit_absence(cb: CallbackQuery, state: FSMContext):
     conn.close()
 
     if not row:
-        await cb.answer("Заявка не найдена.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
 
     user_id, cat, sd, ed, cmnt, st = row
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     if user_id != cb.from_user.id:
-        await cb.answer("Это не ваша заявка!", show_alert=True)
+        await cb.answer(TEXT_NOT_YOUR_REQUEST, show_alert=True)
         return
     if st != "approved":
         await cb.answer("Изменять можно только 'approved'.", show_alert=True)
@@ -2702,7 +2745,7 @@ async def request_edit_absence(cb: CallbackQuery, state: FSMContext):
 async def edit_category_choice(cb: CallbackQuery, state: FSMContext):
     new_cat = cb.data.split("edit_cat_")[1]
     await state.update_data(new_cat=new_cat)
-    await cb.message.answer("Введите новую дату начала (дд.мм.гггг):")
+    await cb.message.answer(TEXT_ENTER_NEW_START_DATE)
     await state.set_state(EditAbsenceFSM.waiting_for_new_start_date)
     await cb.answer()
 
@@ -2712,11 +2755,11 @@ async def edit_absence_start_date(message: types.Message, state: FSMContext):
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        await message.answer(TEXT_INVALID_DATE_FORMAT)
         return
 
     await state.update_data(new_start_date=str(date_obj))
-    await message.answer("Введите новую дату окончания (дд.мм.гггг):")
+    await message.answer(TEXT_ENTER_NEW_END_DATE)
     await state.set_state(EditAbsenceFSM.waiting_for_new_end_date)
 
 @dp.message(EditAbsenceFSM.waiting_for_new_end_date)
@@ -2725,18 +2768,18 @@ async def edit_absence_end_date(message: types.Message, state: FSMContext):
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        await message.answer(TEXT_INVALID_DATE_FORMAT)
         return
 
     data = await state.get_data()
     start_str = data["new_start_date"]
     start_date_obj = datetime.datetime.strptime(start_str, "%Y-%m-%d").date()
     if date_obj < start_date_obj:
-        await message.answer("Дата окончания не может быть раньше даты начала.")
+        await message.answer(TEXT_END_DATE_BEFORE_START)
         return
 
     await state.update_data(new_end_date=str(date_obj))
-    await message.answer("Введите новый комментарий (или '-' если без комментария):")
+    await message.answer(TEXT_ENTER_NEW_COMMENT)
     await state.set_state(EditAbsenceFSM.waiting_for_new_comment)
 
 @dp.message(EditAbsenceFSM.waiting_for_new_comment)
@@ -2762,7 +2805,7 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
     """, (abs_id,))
     old_row = cur.fetchone()
     if not old_row:
-        await message.answer("Исходная заявка не найдена.")
+        await message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
         conn.close()
         return
 
@@ -2865,7 +2908,7 @@ async def edit_approval_callback(cb: CallbackQuery):
     """, (abs_id,))
     old_row = cur.fetchone()
     if not old_row:
-        await cb.message.answer("Исходная заявка не найдена.")
+        await cb.message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
         conn.close()
         await cb.answer()
         return
@@ -3000,12 +3043,11 @@ async def show_absence_requests(message: types.Message):
 
     # Cancel KB
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
-        "Сейчас вы обрабатываете заявки на отсутствие.\n"
-        "Если передумали, нажмите «Отмена».",
+        f"Сейчас вы обрабатываете заявки на отсутствие.\n{TEXT_CANCEL_HINT}",
         reply_markup=cancel_kb
     )
 
@@ -3076,7 +3118,7 @@ async def callback_absence_approval(cb: CallbackQuery):
     """, (abs_id,))
     row = cur.fetchone()
     if not row:
-        await cb.answer("Заявка не найдена.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         conn.close()
         return
 
@@ -3130,13 +3172,13 @@ async def select_user_for_absences(message: types.Message):
     if group_id:
         members = get_group_members(group_id)
         if not members:
-            await message.answer("В группе нет сотрудников.")
+            await message.answer(TEXT_GROUP_NO_USERS)
             return
         kb_rows = []
         for (tid, fname, _username, _role) in members:
             kb_rows.append([InlineKeyboardButton(text=fname, callback_data=f"show_abs:{tid}")])
         inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-        await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+        await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -3151,7 +3193,7 @@ async def select_user_for_absences(message: types.Message):
     conn.close()
 
     if not rows:
-        await message.answer("Нет одобренных сотрудников.")
+        await message.answer(TEXT_NO_APPROVED_EMPLOYEES)
         return
 
     kb_rows = []
@@ -3161,7 +3203,7 @@ async def select_user_for_absences(message: types.Message):
         ])
          
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
 
 @dp.callback_query(lambda c: c.data.startswith("show_abs:"))
 async def cb_show_absences(cb: CallbackQuery):
@@ -3224,7 +3266,7 @@ async def admin_delete_absence_start(message: types.Message):
 
     # NEW
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
@@ -3234,7 +3276,7 @@ async def admin_delete_absence_start(message: types.Message):
 
     members = get_group_members(group_id)
     if not members:
-        await message.answer("В группе нет сотрудников.")
+        await message.answer(TEXT_GROUP_NO_USERS)
         return
 
     kb_rows = []
@@ -3361,32 +3403,31 @@ async def admin_edit_absence_start(message: types.Message, state: FSMContext):
     await state.update_data(group_id=group_id)
 
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
-        "Сейчас вы редактируете отсутствие пользователя.\n"
-        "Если передумали, нажмите «Отмена».",
+        f"Сейчас вы редактируете отсутствие пользователя.\n{TEXT_CANCEL_HINT}",
         reply_markup=cancel_kb
     )
 
     if group_id:
         members = get_group_members(group_id)
         if not members:
-            await message.answer("В группе нет сотрудников.")
+            await message.answer(TEXT_GROUP_NO_USERS)
             return
         kb_rows = []
         for (tid, fname, _username, _role) in members:
             kb_rows.append([InlineKeyboardButton(text=fname, callback_data=f"adm_edit_user:{tid}")])
         inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-        await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+        await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
         await state.set_state(AdminEditAbsenceFSM.waiting_for_user)
         return
 
     # Глобально (суперадмин)
     users = get_approved_users()
     if not users:
-        await message.answer("Нет одобренных сотрудников.")
+        await message.answer(TEXT_NO_APPROVED_EMPLOYEES)
         return
 
     kb_rows = []
@@ -3396,7 +3437,7 @@ async def admin_edit_absence_start(message: types.Message, state: FSMContext):
             label += f" (@{username})"
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_user:{uid}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await message.answer("Выберите пользователя:", reply_markup=inline_kb)
+    await message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_user)
 
 
@@ -3414,7 +3455,7 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
     try:
         user_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректный пользователь.", show_alert=True)
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
     if group_id and not user_in_group(user_id, group_id):
@@ -3465,7 +3506,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
     try:
         abs_id = int(cb.data.split(":", 1)[1])
     except ValueError:
-        await cb.answer("Некорректная заявка.", show_alert=True)
+        await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -3479,7 +3520,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
     conn.close()
 
     if not row:
-        await cb.answer("Заявка не найдена.", show_alert=True)
+        await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
         return
 
     target_user_id, cat, sd, ed, cmnt, st = row
@@ -3514,7 +3555,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
 async def admin_edit_absence_category(cb: CallbackQuery, state: FSMContext):
     new_cat = cb.data.split("adm_edit_cat_")[1]
     await state.update_data(new_cat=new_cat)
-    await cb.message.answer("Введите новую дату начала (дд.мм.гггг):")
+    await cb.message.answer(TEXT_ENTER_NEW_START_DATE)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_start_date)
     await cb.answer()
 
@@ -3525,11 +3566,11 @@ async def admin_edit_absence_start_date(message: types.Message, state: FSMContex
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        await message.answer(TEXT_INVALID_DATE_FORMAT)
         return
 
     await state.update_data(new_start_date=str(date_obj))
-    await message.answer("Введите новую дату окончания (дд.мм.гггг):")
+    await message.answer(TEXT_ENTER_NEW_END_DATE)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_end_date)
 
 
@@ -3539,18 +3580,18 @@ async def admin_edit_absence_end_date(message: types.Message, state: FSMContext)
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Формат: дд.мм.гггг.")
+        await message.answer(TEXT_INVALID_DATE_FORMAT)
         return
 
     data = await state.get_data()
     start_str = data["new_start_date"]
     start_date_obj = datetime.datetime.strptime(start_str, "%Y-%m-%d").date()
     if date_obj < start_date_obj:
-        await message.answer("Дата окончания не может быть раньше даты начала.")
+        await message.answer(TEXT_END_DATE_BEFORE_START)
         return
 
     await state.update_data(new_end_date=str(date_obj))
-    await message.answer("Введите новый комментарий (или '-' если без комментария):")
+    await message.answer(TEXT_ENTER_NEW_COMMENT)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_comment)
 
 
@@ -3577,7 +3618,7 @@ async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
     old_row = cur.fetchone()
     if not old_row:
         conn.close()
-        await message.answer("Исходная заявка не найдена.")
+        await message.answer(TEXT_ORIGINAL_REQUEST_NOT_FOUND)
         await state.clear()
         return
 
@@ -3636,12 +3677,11 @@ async def start_csv_export(message: types.Message, state: FSMContext):
 
     # NEW: create "Cancel" reply keyboard
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
-        "Сейчас вы собираетесь выгрузить отсутствия (CSV).\n"
-        "Введите дату начала периода (дд.мм.гггг) или нажмите «Отмена», чтобы прервать.",
+        f"Сейчас вы собираетесь выгрузить отсутствия (CSV).\n{TEXT_ENTER_PERIOD_START_OR_CANCEL}",
         reply_markup=cancel_kb
     )
 
@@ -3649,7 +3689,7 @@ async def start_csv_export(message: types.Message, state: FSMContext):
 
 @dp.message(CsvExportFSM.waiting_for_start_date)
 async def csv_export_start_date(message: types.Message, state: FSMContext):
-    if message.text == "Отмена":
+    if message.text == TEXT_CANCEL_BUTTON:
         await state.clear()
         await message.answer(
             TEXT_CANCELLED,
@@ -3670,7 +3710,7 @@ async def csv_export_start_date(message: types.Message, state: FSMContext):
 
 @dp.message(CsvExportFSM.waiting_for_end_date)
 async def csv_export_end_date(message: types.Message, state: FSMContext):
-    if message.text == "Отмена":
+    if message.text == TEXT_CANCEL_BUTTON:
         await state.clear()
         await message.answer(
             TEXT_CANCELLED,
@@ -3890,7 +3930,7 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
         await message.answer("Вы не одобрены, не можете добавлять отсутствие другим.")
         return
     if not is_superadmin(message.from_user.id) and not user_has_any_group(message.from_user.id):
-        await message.answer("Вы не состоите ни в одной группе. Подайте заявку на вступление.")
+        await message.answer(TEXT_NOT_IN_ANY_GROUP)
         return
 
     # Сбросим текущее состояние, если вдруг пользователь был в другом процессе
@@ -3898,12 +3938,11 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
 
     # NEW
     cancel_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text=TEXT_CANCEL_BUTTON)]],
         resize_keyboard=True
     )
     await message.answer(
-        "Сейчас вы добавляете отсутствие другому пользователю.\n"
-        "Если передумали, нажмите «Отмена».",
+        f"Сейчас вы добавляете отсутствие другому пользователю.\n{TEXT_CANCEL_HINT}",
         reply_markup=cancel_kb
     )
 
@@ -3948,7 +3987,7 @@ async def pick_user_for_abs(cb: CallbackQuery, state: FSMContext):
     2) Сохраняем target_user_id, переходим к выбору категории.
     """
     if not is_user_approved(cb.from_user.id):
-        await cb.answer("Ваш аккаунт не одобрен.")
+        await cb.answer(TEXT_NOT_APPROVED_SHORT)
         return
 
     # Извлекаем ID выбранного сотрудника
@@ -3968,7 +4007,7 @@ async def pick_user_for_abs(cb: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="Другое", callback_data="another_cat_other")
         ]
     ])
-    await cb.message.answer("Выберите категорию отсутствия:", reply_markup=kb)
+    await cb.message.answer(TEXT_SELECT_ABSENCE_CATEGORY, reply_markup=kb)
     await state.set_state(AddAbsenceForAnotherFSM.waiting_for_category)
     await cb.answer()
 
@@ -3979,7 +4018,7 @@ async def pick_category_for_another(cb: CallbackQuery, state: FSMContext):
     Сохраняем категорию, просим дату начала (дд.мм.гггг).
     """
     if not is_user_approved(cb.from_user.id):
-        await cb.answer("Ваш аккаунт не одобрен.")
+        await cb.answer(TEXT_NOT_APPROVED_SHORT)
         return
 
     category = cb.data.split("another_cat_")[1]  # vacation / sick / dayoff / other
@@ -3998,11 +4037,11 @@ async def another_absence_start_date(message: types.Message, state: FSMContext):
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Попробуйте снова (дд.мм.гггг).")
+        await message.answer(TEXT_INVALID_DATE_TRY_AGAIN)
         return
 
     await state.update_data(start_date=str(date_obj))  # Сохраним как 'YYYY-MM-DD'
-    await message.answer("Введите дату окончания (дд.мм.гггг):")
+    await message.answer(TEXT_ENTER_END_DATE)
     await state.set_state(AddAbsenceForAnotherFSM.waiting_for_end_date)
 
 
@@ -4012,18 +4051,18 @@ async def another_absence_end_date(message: types.Message, state: FSMContext):
     try:
         date_obj = datetime.datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        await message.answer("Некорректная дата. Попробуйте снова (дд.мм.гггг).")
+        await message.answer(TEXT_INVALID_DATE_TRY_AGAIN)
         return
 
     data = await state.get_data()
     start_date_str = data["start_date"]
     start_obj = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
     if date_obj < start_obj:
-        await message.answer("Дата окончания не может быть раньше даты начала.")
+        await message.answer(TEXT_END_DATE_BEFORE_START)
         return
 
     await state.update_data(end_date=str(date_obj))
-    await message.answer("Введите комментарий (или '-' если без комментария):")
+    await message.answer(TEXT_ENTER_COMMENT)
     await state.set_state(AddAbsenceForAnotherFSM.waiting_for_comment)
 
 
@@ -4152,9 +4191,9 @@ async def back_to_menu(message: types.Message, state: FSMContext):
     await message.answer(TEXT_BACK_TO_MENU, reply_markup=get_role_menu(message.from_user.id))
 
 #######################
-# Глобальный хендлер "Отмена" (Reply-кнопка)
+# Глобальный хендлер TEXT_CANCEL_BUTTON (Reply-кнопка)
 ###############################
-@dp.message(StateFilter("*"), lambda msg: msg.text == "Отмена")
+@dp.message(StateFilter("*"), lambda msg: msg.text == TEXT_CANCEL_BUTTON)
 async def cancel_process(message: types.Message, state: FSMContext):
     """
     Если пользователь во время любого состояния FSM нажмёт «Отмена»,
@@ -4180,7 +4219,7 @@ async def fallback_handler(message: types.Message):
         await message.answer(TEXT_NOT_APPROVED, reply_markup=not_approved_menu)
         return
 
-    await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=get_role_menu(tg_id))
+    await message.answer(TEXT_UNKNOWN_COMMAND, reply_markup=get_role_menu(tg_id))
 
 ###############################################################################
 # Запуск
