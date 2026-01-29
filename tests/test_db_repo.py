@@ -120,6 +120,76 @@ class TestDbRepo(unittest.TestCase):
         db_repo.delete_absence(abs_id)
         self.assertIsNone(db_repo.get_absence_by_id(abs_id))
 
+    def test_absence_filters_by_group(self):
+        db_repo.create_group("Group A", created_by=1)
+        db_repo.create_group("Group B", created_by=1)
+        groups = db_repo.list_all_groups()
+        group_a = groups[0][0]
+        group_b = groups[1][0]
+
+        user_a = 5001
+        user_b = 5002
+        db_repo.upsert_user_registration(user_a, "ua", "User A")
+        db_repo.upsert_user_registration(user_b, "ub", "User B")
+        db_repo.approve_user(user_a)
+        db_repo.approve_user(user_b)
+        db_repo.add_group_membership(user_a, group_a, "member", created_by=1)
+        db_repo.add_group_membership(user_b, group_b, "member", created_by=1)
+
+        abs_a_pending = db_repo.create_absence(user_a, "vacation", "2026-02-01", "2026-02-02", "", "pending")
+        abs_b_pending = db_repo.create_absence(user_b, "vacation", "2026-02-01", "2026-02-02", "", "pending")
+        db_repo.create_absence(user_a, "dayoff", "2026-02-05", "2026-02-05", "", "approved")
+        db_repo.create_absence(user_b, "dayoff", "2026-02-05", "2026-02-05", "", "approved")
+
+        pending_all = db_repo.list_pending_absences()
+        pending_a = db_repo.list_pending_absences(group_a)
+        pending_b = db_repo.list_pending_absences(group_b)
+        self.assertTrue(any(r[0] == abs_a_pending for r in pending_all))
+        self.assertTrue(any(r[0] == abs_b_pending for r in pending_all))
+        self.assertTrue(all(r[1] == user_a for r in pending_a))
+        self.assertTrue(all(r[1] == user_b for r in pending_b))
+
+        approved_a = db_repo.list_approved_absences_between("2026-02-01", "2026-02-10", group_a)
+        approved_b = db_repo.list_approved_absences_between("2026-02-01", "2026-02-10", group_b)
+        self.assertTrue(all(r[0] == user_a for r in approved_a))
+        self.assertTrue(all(r[0] == user_b for r in approved_b))
+
+        today_a = db_repo.list_approved_absences_for_date("2026-02-05", group_a)
+        today_b = db_repo.list_approved_absences_for_date("2026-02-05", group_b)
+        self.assertTrue(all(r[0] == user_a for r in today_a))
+        self.assertTrue(all(r[0] == user_b for r in today_b))
+
+    def test_delete_group_cascades(self):
+        db_repo.create_group("Group X", created_by=1)
+        group_id, _name = db_repo.list_all_groups()[0]
+
+        user_id = 6001
+        db_repo.upsert_user_registration(user_id, "ux", "User X")
+        db_repo.approve_user(user_id)
+        db_repo.add_group_membership(user_id, group_id, "member", created_by=1)
+        db_repo.set_last_group_id(user_id, group_id)
+        req_id = db_repo.create_group_request(user_id, group_id, "join", requested_by=user_id)
+
+        db_repo.delete_group(group_id)
+
+        self.assertFalse(db_repo.list_all_groups())
+        self.assertIsNone(db_repo.get_group_membership_role(user_id, group_id))
+        self.assertIsNone(db_repo.get_group_request(req_id))
+        self.assertIsNone(db_repo.get_last_group_id(user_id))
+
+    def test_get_user_fullname_formatting(self):
+        user_id = 7001
+        db_repo.upsert_user_registration(user_id, "nick", "Test User")
+        db_repo.approve_user(user_id)
+        self.assertEqual(db_repo.get_user_fullname(user_id), "Test User (@nick)")
+
+        user_id2 = 7002
+        db_repo.upsert_user_registration(user_id2, "", "No Username")
+        db_repo.approve_user(user_id2)
+        self.assertEqual(db_repo.get_user_fullname(user_id2), "No Username")
+
+        self.assertEqual(db_repo.get_user_fullname(99999), "User 99999")
+
 
 if __name__ == "__main__":
     unittest.main()
