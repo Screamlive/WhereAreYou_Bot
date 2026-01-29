@@ -190,6 +190,41 @@ class TestDbRepo(unittest.TestCase):
 
         self.assertEqual(db_repo.get_user_fullname(99999), "User 99999")
 
+    def test_list_overlapping_absences(self):
+        db_repo.create_group("Group O1", created_by=1)
+        db_repo.create_group("Group O2", created_by=1)
+        group_a, _name_a = db_repo.list_all_groups()[0]
+        group_b, _name_b = db_repo.list_all_groups()[1]
+
+        user_owner = 8001
+        user_a = 8002
+        user_b = 8003
+
+        db_repo.upsert_user_registration(user_owner, "owner", "Owner")
+        db_repo.upsert_user_registration(user_a, "ua", "User A")
+        db_repo.upsert_user_registration(user_b, "ub", "User B")
+        db_repo.approve_user(user_owner)
+        db_repo.approve_user(user_a)
+        db_repo.approve_user(user_b)
+
+        db_repo.add_group_membership(user_owner, group_a, "member", created_by=1)
+        db_repo.add_group_membership(user_a, group_a, "member", created_by=1)
+        db_repo.add_group_membership(user_b, group_b, "member", created_by=1)
+
+        db_repo.create_absence(user_owner, "vacation", "2026-03-02", "2026-03-03", "", "approved")
+        db_repo.create_absence(user_a, "dayoff", "2026-03-01", "2026-03-03", "", "approved")
+        db_repo.create_absence(user_b, "sick", "2026-03-02", "2026-03-04", "", "pending")
+        db_repo.create_absence(user_b, "sick", "2026-03-02", "2026-03-04", "", "declined")
+
+        all_rows = db_repo.list_overlapping_absences("2026-03-02", "2026-03-02", user_owner)
+        self.assertTrue(any(r[1] == user_a for r in all_rows))
+        self.assertTrue(any(r[1] == user_b for r in all_rows))
+        self.assertFalse(any(r[1] == user_owner for r in all_rows))
+
+        group_a_rows = db_repo.list_overlapping_absences("2026-03-02", "2026-03-02", user_owner, group_id=group_a)
+        self.assertTrue(any(r[1] == user_a for r in group_a_rows))
+        self.assertFalse(any(r[1] == user_b for r in group_a_rows))
+
 
 if __name__ == "__main__":
     unittest.main()

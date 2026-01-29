@@ -558,6 +558,65 @@ def list_pending_absences(group_id: int | None = None) -> list[tuple[int, int, s
     return rows
 
 
+def list_overlapping_absences(
+    start_date: str,
+    end_date: str,
+    exclude_user_id: int,
+    group_id: int | None = None,
+) -> list[tuple[int, int, str, str, str, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT a.id,
+                   a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   a.status,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            JOIN group_memberships gm ON gm.user_id = a.user_id
+            WHERE a.user_id != ?
+              AND a.status != 'declined'
+              AND gm.group_id = ?
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (exclude_user_id, group_id, end_date, start_date)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT a.id,
+                   a.user_id,
+                   a.category,
+                   a.start_date,
+                   a.end_date,
+                   a.comment,
+                   a.status,
+                   u.fullname,
+                   u.username
+            FROM absences a
+            JOIN users u ON a.user_id = u.telegram_id
+            WHERE a.user_id != ?
+              AND a.status != 'declined'
+              AND date(a.start_date) <= date(?)
+              AND date(a.end_date) >= date(?)
+            ORDER BY a.start_date
+            """,
+            (exclude_user_id, end_date, start_date)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 def create_edit_request(
     abs_id: int,
     new_cat: str,
