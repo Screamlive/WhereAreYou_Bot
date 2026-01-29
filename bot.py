@@ -41,6 +41,7 @@ from keyboards import (
     no_group_groups_menu,
     user_other_absences_menu,
 )
+from utils import format_date_display
 
 ###############################################################################
 # ЛОГИРОВАНИЕ
@@ -293,16 +294,6 @@ def get_user_fullname(tg_id: int) -> str:
         else:
             return f"{fullname}"
     return f"User {tg_id}"
-
-def format_date_display(date_str: str | None) -> str:
-    if not date_str:
-        return "—"
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
-        try:
-            return datetime.datetime.strptime(date_str, fmt).strftime("%d.%m.%Y")
-        except ValueError:
-            continue
-    return date_str
 
 def get_role_menu(tg_id: int) -> ReplyKeyboardMarkup:
     if is_superadmin(tg_id):
