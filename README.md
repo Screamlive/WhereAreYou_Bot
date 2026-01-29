@@ -62,6 +62,11 @@ pytest
 Для ежедневных сводок используйте user‑timer systemd (универсальный вариант).
 Файлы лежат в `deploy/systemd-user/`.
 
+Быстрый запуск (установит зависимости и настроит таймер):
+```
+bash deploy/setup.sh
+```
+
 Установка:
 ```
 mkdir -p ~/.config/systemd/user
