@@ -42,6 +42,18 @@ from keyboards import (
     user_other_absences_menu,
 )
 from utils import format_date_display
+from texts import (
+    TEXT_NO_RIGHTS,
+    TEXT_NO_RIGHTS_ALERT,
+    TEXT_NO_RIGHTS_ADMIN,
+    TEXT_NO_RIGHTS_ADMIN_ALERT,
+    TEXT_SELECT_GROUP_FIRST,
+    TEXT_SELECT_GROUP_FIRST_ALERT,
+    TEXT_NOT_REGISTERED,
+    TEXT_NOT_APPROVED,
+    TEXT_CANCELLED,
+    TEXT_BACK_TO_MENU,
+)
 
 ###############################################################################
 # ЛОГИРОВАНИЕ
@@ -324,56 +336,56 @@ async def open_my_absences_menu(message: types.Message):
 @dp.message(lambda msg: msg.text == "Управление пользователями")
 async def open_superadmin_users_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Управление пользователями».", reply_markup=superadmin_users_menu)
 
 @dp.message(lambda msg: msg.text == "Управление группами")
 async def open_superadmin_groups_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Управление группами».", reply_markup=superadmin_groups_menu)
 
 @dp.message(lambda msg: msg.text == "Управление отсутствиями")
 async def open_superadmin_absences_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Управление отсутствиями».", reply_markup=superadmin_absences_menu)
 
 @dp.message(lambda msg: msg.text == "Управление суперадминами")
 async def open_superadmin_admins_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Управление суперадминами».", reply_markup=superadmin_superadmins_menu)
 
 @dp.message(lambda msg: msg.text == "Рабочая группа")
 async def open_superadmin_work_group_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Рабочая группа».", reply_markup=superadmin_work_group_menu)
 
 @dp.message(lambda msg: msg.text == "Заявки в группу")
 async def open_group_requests_menu(message: types.Message):
     if not is_superadmin(message.from_user.id) and not user_is_group_admin_any(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Заявки в группу».", reply_markup=group_admin_requests_menu)
 
 @dp.message(lambda msg: msg.text == "Пользователи группы")
 async def open_group_users_menu(message: types.Message):
     if not is_superadmin(message.from_user.id) and not user_is_group_admin_any(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Пользователи группы».", reply_markup=group_admin_users_menu)
 
 @dp.message(lambda msg: msg.text == "Управление отсутствиями группы")
 async def open_group_absences_menu(message: types.Message):
     if not is_superadmin(message.from_user.id) and not user_is_group_admin_any(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     await message.answer("Раздел «Управление отсутствиями группы».", reply_markup=group_admin_absences_menu)
 
@@ -574,7 +586,7 @@ async def process_fullname(message: types.Message, state: FSMContext):
 @dp.callback_query(lambda c: c.data.startswith("approve_user:") or c.data.startswith("decline_user:"))
 async def inline_approve_user(cb: CallbackQuery):
     if not is_user_admin(cb.from_user.id):
-        await cb.answer("Нет прав админа!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ADMIN_ALERT, show_alert=True)
         return
 
     action, user_id_str = cb.data.split(":")
@@ -636,7 +648,7 @@ async def inline_approve_user(cb: CallbackQuery):
 @dp.message(Command("approve"))
 async def cmd_approve(message: types.Message):
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     # Cancel KB
@@ -679,7 +691,7 @@ async def cmd_approve(message: types.Message):
 @dp.message(Command("decline"))
 async def cmd_decline(message: types.Message):
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     parts = message.text.split()
@@ -711,7 +723,7 @@ async def cmd_decline(message: types.Message):
 @dp.message(lambda msg: msg.text in {"Список запросов", "Список запросов (регистрация)"})
 async def list_pending_users(message: types.Message):
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -744,9 +756,9 @@ async def list_approved_users(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав.")
+            await message.answer(TEXT_NO_RIGHTS)
         return
 
     if group_id:
@@ -790,12 +802,12 @@ async def list_group_admins_cmd(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав.")
+            await message.answer(TEXT_NO_RIGHTS)
         return
     if not group_id:
-        await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+        await message.answer(TEXT_SELECT_GROUP_FIRST)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -831,7 +843,7 @@ class GroupCreateFSM(StatesGroup):
 @dp.message(lambda msg: msg.text == "Создать группу")
 async def create_group_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     await state.clear()
@@ -870,7 +882,7 @@ async def create_group_finish(message: types.Message, state: FSMContext):
 @dp.message(lambda msg: msg.text == "Список групп")
 async def list_groups(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -887,7 +899,7 @@ async def list_groups(message: types.Message):
 @dp.message(lambda msg: msg.text == "Удалить группу")
 async def delete_group_start(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -904,7 +916,7 @@ async def delete_group_start(message: types.Message):
 @dp.callback_query(lambda c: c.data.startswith("del_group_pick:"))
 async def delete_group_confirm(cb: CallbackQuery):
     if not is_superadmin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     try:
@@ -931,7 +943,7 @@ async def delete_group_confirm(cb: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("del_group_confirm:"))
 async def delete_group_confirmed(cb: CallbackQuery):
     if not is_superadmin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     try:
@@ -978,7 +990,7 @@ class SuperadminShowUsernameFSM(StatesGroup):
 @dp.message(lambda msg: msg.text == "Изменить имя пользователя")
 async def superadmin_change_name_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     users = get_all_users()
@@ -1050,7 +1062,7 @@ async def superadmin_change_name_finish(message: types.Message, state: FSMContex
 @dp.message(lambda msg: msg.text == "Показать @username")
 async def superadmin_show_username_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     users = get_all_users()
@@ -1102,7 +1114,7 @@ async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContex
 @dp.message(lambda msg: msg.text == "Удалить пользователя из бота")
 async def superadmin_delete_user_start(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     users = get_all_users()
@@ -1122,7 +1134,7 @@ async def superadmin_delete_user_start(message: types.Message):
 @dp.callback_query(lambda c: c.data.startswith("del_bot_user_pick:"))
 async def superadmin_delete_user_confirm(cb: CallbackQuery):
     if not is_superadmin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     try:
@@ -1149,7 +1161,7 @@ async def superadmin_delete_user_confirm(cb: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("del_bot_user_confirm:"))
 async def superadmin_delete_user_execute(cb: CallbackQuery):
     if not is_superadmin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     try:
@@ -1197,7 +1209,7 @@ class GroupAdminAssignFSM(StatesGroup):
 @dp.message(lambda msg: msg.text in {"Назначить админа группы", "Назначить администратора группы"})
 async def assign_group_admin_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -1333,7 +1345,7 @@ class GroupAdminRevokeFSM(StatesGroup):
 @dp.message(lambda msg: msg.text in {"Отозвать администратора группы", "Отозвать админа группы"})
 async def revoke_group_admin_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -1457,7 +1469,7 @@ class GroupAddUserFSM(StatesGroup):
 @dp.message(lambda msg: msg.text == "Добавить пользователя в группу")
 async def add_user_to_group_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -1574,7 +1586,7 @@ class GroupRemoveUserFSM(StatesGroup):
 @dp.message(lambda msg: msg.text == "Удалить пользователя из группы" and is_superadmin(msg.from_user.id))
 async def remove_user_from_group_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     groups = list_all_groups()
@@ -1686,17 +1698,17 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
 async def show_group_requests(message: types.Message):
     user_id = message.from_user.id
     if not is_superadmin(user_id) and not user_is_group_admin_any(user_id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     group_id = None
     if not is_superadmin(user_id):
         group_id = get_last_group_id(user_id)
         if not group_id:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
             return
         if not is_group_admin(user_id, group_id):
-            await message.answer("Нет прав.")
+            await message.answer(TEXT_NO_RIGHTS)
             return
     else:
         group_id = get_last_group_id(user_id)
@@ -1780,7 +1792,7 @@ async def handle_group_request(cb: CallbackQuery):
 
     if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
         conn.close()
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     group_name = get_group_name(group_id) or f"ID={group_id}"
@@ -1861,7 +1873,7 @@ async def change_work_group(message: types.Message):
     admin_groups = get_admin_groups(user_id)
 
     if not is_superadmin(user_id) and not admin_groups:
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     if is_superadmin(user_id):
@@ -1888,7 +1900,7 @@ async def change_work_group(message: types.Message):
 @dp.message(lambda msg: msg.text == "Глобально")
 async def set_work_group_global(message: types.Message):
     if not is_superadmin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
     set_last_group_id(message.from_user.id, None)
     await message.answer("Рабочая группа сброшена. Режим: глобально.", reply_markup=get_role_menu(message.from_user.id))
@@ -1906,7 +1918,7 @@ async def set_work_group(cb: CallbackQuery):
 
     if payload == "global":
         if not is_superadmin(user_id):
-            await cb.answer("Нет прав!", show_alert=True)
+            await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
             return
         set_last_group_id(user_id, None)
         await cb.message.answer("Рабочая группа сброшена. Режим: глобально.")
@@ -1920,7 +1932,7 @@ async def set_work_group(cb: CallbackQuery):
         return
 
     if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     group_name = get_group_name(group_id)
@@ -1947,7 +1959,7 @@ async def pick_user_for_admin(message: types.Message):
     Бот показывает список одобренных, но не админов (is_approved=1, is_admin=0).
     """
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -1981,7 +1993,7 @@ async def callback_make_admin_user(cb: CallbackQuery):
     Шаг 2: админ выбрал конкретного пользователя — делаем его админом.
     """
     if not is_user_admin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     user_id_str = cb.data.split(":")[1]
@@ -2012,7 +2024,7 @@ async def pick_admin_to_revoke(message: types.Message):
     Бот показывает список пользователей, у которых is_admin=1 (кроме себя, если хотите).
     """
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2047,7 +2059,7 @@ async def callback_revoke_admin_user(cb: CallbackQuery):
     Шаг 2: выбран конкретный админ, у которого отзываем права.
     """
     if not is_user_admin(cb.from_user.id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     user_id_str = cb.data.split(":")[1]
@@ -2076,7 +2088,7 @@ async def callback_revoke_admin_user(cb: CallbackQuery):
 @dp.message(lambda msg: msg.text in {"Список админов", "Список суперадминистраторов"})
 async def list_admins_cmd(message: types.Message):
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав.")
+        await message.answer(TEXT_NO_RIGHTS)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -2103,9 +2115,9 @@ async def remove_user_prompt(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав.")
+            await message.answer(TEXT_NO_RIGHTS)
         return
     if not group_id:
         await message.answer("Для удаления сотрудника выберите рабочую группу (кнопка «Сменить группу»).")
@@ -2145,10 +2157,10 @@ async def callback_remove_user(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if not group_id:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
@@ -2820,10 +2832,10 @@ async def edit_approval_callback(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав админа!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ADMIN_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     action, req_id_str = cb.data.split(":")
@@ -2842,7 +2854,7 @@ async def edit_approval_callback(cb: CallbackQuery):
     abs_id, new_cat, new_sd, new_ed, new_comment, user_id = row
     if group_id and not user_in_group(user_id, group_id):
         conn.close()
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     # Считываем старые поля (если хотите показать «старое → новое» админу)
@@ -2921,10 +2933,10 @@ async def confirm_delete_absence(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     action, abs_id_str = cb.data.split(":")
@@ -2949,7 +2961,7 @@ async def confirm_delete_absence(cb: CallbackQuery):
     ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
         conn.close()
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if action == "approve_del":
         cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
@@ -2981,9 +2993,9 @@ async def show_absence_requests(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     # Cancel KB
@@ -3046,10 +3058,10 @@ async def callback_absence_approval(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     action, abs_id_str = cb.data.split(":")
@@ -3074,7 +3086,7 @@ async def callback_absence_approval(cb: CallbackQuery):
         conn.close()
         return
     if group_id and not user_in_group(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         conn.close()
         return
 
@@ -3110,9 +3122,9 @@ async def select_user_for_absences(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     if group_id:
@@ -3156,15 +3168,15 @@ async def cb_show_absences(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
     if group_id and not user_in_group(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -3202,9 +3214,9 @@ async def admin_delete_absence_start(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
     if not group_id:
         await message.answer("Для удаления отсутствия выберите рабочую группу (кнопка «Сменить группу»).")
@@ -3238,15 +3250,15 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select or not group_id:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     user_id = int(cb.data.split(":")[1])
     if not user_in_group(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -3286,10 +3298,10 @@ async def admin_delete_absence_final(cb: CallbackQuery):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select or not group_id:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     abs_id = int(cb.data.split(":")[1])
@@ -3305,7 +3317,7 @@ async def admin_delete_absence_final(cb: CallbackQuery):
 
     user_id, cat, sd, ed = row
     if group_id and not user_in_group(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         conn.close()
         return
     cur.execute("DELETE FROM absences WHERE id=?", (abs_id,))
@@ -3340,9 +3352,9 @@ async def admin_edit_absence_start(message: types.Message, state: FSMContext):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     await state.clear()
@@ -3393,10 +3405,10 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     try:
@@ -3406,7 +3418,7 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
         return
 
     if group_id and not user_in_group(user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     conn = sqlite3.connect(DB_NAME)
@@ -3444,10 +3456,10 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
     admin_id = cb.from_user.id
     allowed, group_id, need_select = get_admin_scope(admin_id)
     if not allowed:
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
     if need_select:
-        await cb.answer("Сначала выберите рабочую группу.", show_alert=True)
+        await cb.answer(TEXT_SELECT_GROUP_FIRST_ALERT, show_alert=True)
         return
 
     try:
@@ -3474,7 +3486,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     if group_id and not user_in_group(target_user_id, group_id):
-        await cb.answer("Нет прав!", show_alert=True)
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
     await state.update_data(abs_id=abs_id, target_user_id=target_user_id)
@@ -3598,7 +3610,7 @@ async def admin_edit_absence_comment(message: types.Message, state: FSMContext):
         pass
 
     log_action(message.from_user.id, f"admin_edit_absence {abs_id}")
-    await message.answer("Возвращаю вас в меню.", reply_markup=get_role_menu(message.from_user.id))
+    await message.answer(TEXT_BACK_TO_MENU, reply_markup=get_role_menu(message.from_user.id))
     await state.clear()
 
 ###############################################################################
@@ -3614,9 +3626,9 @@ async def start_csv_export(message: types.Message, state: FSMContext):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     await state.clear()  # optional if you want to ensure no leftover states
@@ -3640,7 +3652,7 @@ async def csv_export_start_date(message: types.Message, state: FSMContext):
     if message.text == "Отмена":
         await state.clear()
         await message.answer(
-            "Операция отменена. Возвращаю вас в меню.",
+            TEXT_CANCELLED,
             reply_markup=get_role_menu(message.from_user.id)
         )
         return
@@ -3661,7 +3673,7 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
     if message.text == "Отмена":
         await state.clear()
         await message.answer(
-            "Операция отменена. Возвращаю вас в меню.",
+            TEXT_CANCELLED,
             reply_markup=get_role_menu(message.from_user.id)
         )
         return
@@ -3774,9 +3786,9 @@ async def show_absences_today(message: types.Message):
     allowed, group_id, need_select = get_admin_scope(tg_id)
     if not allowed:
         if need_select:
-            await message.answer("Сначала выберите рабочую группу (кнопка «Сменить группу»).")
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
-            await message.answer("Нет прав админа.")
+            await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     # 'today_display' вместо 'today_str', в формате дд.мм.гггг
@@ -4088,7 +4100,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
 
     # Сбрасываем FSM
     await state.clear()
-    await message.answer("Возвращаю вас в меню.", reply_markup=get_role_menu(message.from_user.id))
+    await message.answer(TEXT_BACK_TO_MENU, reply_markup=get_role_menu(message.from_user.id))
 
 
 #############################################
@@ -4125,7 +4137,7 @@ async def broadcast_new_menu():
 async def cmd_refresh_menu(message: types.Message):
     # Проверим права админа, чтобы только админ мог перезапускать обновление
     if not is_user_admin(message.from_user.id):
-        await message.answer("Нет прав админа.")
+        await message.answer(TEXT_NO_RIGHTS_ADMIN)
         return
 
     await broadcast_new_menu()
@@ -4137,7 +4149,7 @@ async def cmd_refresh_menu(message: types.Message):
 @dp.message(lambda msg: msg.text == BACK_BUTTON_TEXT)
 async def back_to_menu(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("Возвращаю вас в меню.", reply_markup=get_role_menu(message.from_user.id))
+    await message.answer(TEXT_BACK_TO_MENU, reply_markup=get_role_menu(message.from_user.id))
 
 #######################
 # Глобальный хендлер "Отмена" (Reply-кнопка)
@@ -4151,7 +4163,7 @@ async def cancel_process(message: types.Message, state: FSMContext):
     await state.clear()
 
     await message.answer(
-        "Операция отменена. Возвращаю вас в меню.",
+        TEXT_CANCELLED,
         reply_markup=get_role_menu(message.from_user.id)
     )
 
@@ -4162,10 +4174,10 @@ async def cancel_process(message: types.Message, state: FSMContext):
 async def fallback_handler(message: types.Message):
     tg_id = message.from_user.id
     if not user_exists_in_db(tg_id):
-        await message.answer("Вы не зарегистрированы. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
+        await message.answer(TEXT_NOT_REGISTERED, reply_markup=not_approved_menu)
         return
     if not is_user_approved(tg_id):
-        await message.answer("Ваш аккаунт не одобрен. Нажмите «Зарегистрироваться».", reply_markup=not_approved_menu)
+        await message.answer(TEXT_NOT_APPROVED, reply_markup=not_approved_menu)
         return
 
     await message.answer("Неизвестная команда. Вот ваше меню:", reply_markup=get_role_menu(tg_id))
