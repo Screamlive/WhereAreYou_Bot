@@ -1,4 +1,9 @@
-from aiogram.types import ReplyKeyboardMarkup
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aiogram.types import ReplyKeyboardMarkup
+else:
+    ReplyKeyboardMarkup = Any
 
 from db_repo import (
     get_user_groups,
