@@ -57,6 +57,26 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+## Ежедневные уведомления
+
+Для ежедневных сводок используйте user‑timer systemd (универсальный вариант).
+Файлы лежат в `deploy/systemd-user/`.
+
+Установка:
+```
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd-user/telegram_bot_notify.service ~/.config/systemd/user/
+cp deploy/systemd-user/telegram_bot_notify.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now telegram_bot_notify.timer
+systemctl --user status telegram_bot_notify.timer
+```
+
+Чтобы таймер работал без активной сессии пользователя:
+```
+sudo loginctl enable-linger $USER
+```
+
 ## Документация
 
 - Подробное описание функций и ролей — в `DOCUMENTATION.md`.

@@ -1,0 +1,8 @@
+[Unit]
+Description=Telegram bot daily notifications (user)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/telegram_bot
+ExecStart=%h/telegram_bot/.venv/bin/python %h/telegram_bot/notifications.py
