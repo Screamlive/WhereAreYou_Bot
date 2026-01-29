@@ -247,6 +247,59 @@ async def list_group_admins_cmd(message: types.Message):
 
 
 ###############################################################################
+# Суперадмин: список пользователей группы
+###############################################################################
+@router.message(lambda msg: msg.text == "Список пользователей группы")
+async def superadmin_list_group_users_start(message: types.Message):
+    if not is_superadmin(message.from_user.id):
+        await message.answer(TEXT_NO_RIGHTS)
+        return
+
+    groups = list_all_groups()
+    if not groups:
+        await message.answer(TEXT_GROUPS_NOT_FOUND)
+        return
+
+    kb_rows = []
+    for gid, name in groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"list_group_users:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите группу:", reply_markup=inline_kb)
+
+
+@router.callback_query(lambda c: c.data.startswith("list_group_users:"))
+async def superadmin_list_group_users_pick(cb: CallbackQuery):
+    if not is_superadmin(cb.from_user.id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        return
+
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
+        return
+
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
+        return
+
+    rows = get_group_members(group_id)
+    if not rows:
+        await cb.message.answer(f"В группе «{group_name}» нет пользователей.")
+        await cb.answer()
+        return
+
+    lines = [f"Пользователи группы «{group_name}»:"] 
+    for uid, fullname, username, role in rows:
+        uname = f" (@{username})" if username else ""
+        role_label = "админ" if role == "admin" else "участник"
+        lines.append(f"- {fullname}{uname} [{role_label}] (ID={uid})")
+    await cb.message.answer("\n".join(lines))
+    await cb.answer()
+
+
+###############################################################################
 # Назначить/отозвать администратора группы
 ###############################################################################
 class GroupAdminAssignFSM(StatesGroup):

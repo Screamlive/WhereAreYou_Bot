@@ -77,6 +77,7 @@ superadmin_groups_menu = ReplyKeyboardMarkup(
         [KeyboardButton(text="Список групп")],
         [KeyboardButton(text="Назначить администратора группы"), KeyboardButton(text="Отозвать администратора группы")],
         [KeyboardButton(text="Добавить пользователя в группу"), KeyboardButton(text="Удалить пользователя из группы")],
+        [KeyboardButton(text="Список пользователей группы")],
         [KeyboardButton(text="Заявки в группу")],
         [KeyboardButton(text=BACK_BUTTON_TEXT)]
     ],
