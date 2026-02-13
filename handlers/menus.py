@@ -63,7 +63,7 @@ async def open_my_absences_menu(message: types.Message):
     await message.answer("Раздел «Мои отсутствия». Выберите действие:", reply_markup=my_absences_menu)
 
 
-@router.message(lambda msg: msg.text == "Управление пользователями")
+@router.message(lambda msg: msg.text in {"Управление пользователями", "Пользователи (упр.)"})
 async def open_superadmin_users_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -71,7 +71,7 @@ async def open_superadmin_users_menu(message: types.Message):
     await message.answer("Раздел «Управление пользователями».", reply_markup=superadmin_users_menu)
 
 
-@router.message(lambda msg: msg.text == "Управление группами")
+@router.message(lambda msg: msg.text in {"Управление группами", "Группы (упр.)"})
 async def open_superadmin_groups_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -79,7 +79,7 @@ async def open_superadmin_groups_menu(message: types.Message):
     await message.answer("Раздел «Управление группами».", reply_markup=superadmin_groups_menu)
 
 
-@router.message(lambda msg: msg.text == "Управление отсутствиями")
+@router.message(lambda msg: msg.text in {"Управление отсутствиями", "Отсутствия (упр.)"})
 async def open_superadmin_absences_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -87,7 +87,7 @@ async def open_superadmin_absences_menu(message: types.Message):
     await message.answer("Раздел «Управление отсутствиями».", reply_markup=superadmin_absences_menu)
 
 
-@router.message(lambda msg: msg.text == "Управление суперадминами")
+@router.message(lambda msg: msg.text in {"Управление суперадминами", "Суперадмины"})
 async def open_superadmin_admins_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -119,7 +119,7 @@ async def open_group_users_menu(message: types.Message):
     await message.answer("Раздел «Пользователи группы».", reply_markup=group_admin_users_menu)
 
 
-@router.message(lambda msg: msg.text == "Управление отсутствиями группы")
+@router.message(lambda msg: msg.text in {"Управление отсутствиями группы", "Отсутствия группы"})
 async def open_group_absences_menu(message: types.Message):
     if not is_superadmin(message.from_user.id) and not user_is_group_admin_any(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -146,7 +146,7 @@ async def open_groups_menu(message: types.Message):
     await message.answer(TEXT_SECTION_GROUPS, reply_markup=user_groups_menu)
 
 
-@router.message(lambda msg: msg.text == "Отсутствия для другого пользователя")
+@router.message(lambda msg: msg.text in {"Отсутствия для другого пользователя", "Для другого пользователя"})
 async def open_other_absences_menu(message: types.Message):
     if not is_user_approved(message.from_user.id):
         await message.answer(TEXT_NOT_APPROVED_SHORT)

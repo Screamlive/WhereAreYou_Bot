@@ -218,7 +218,7 @@ async def delete_group_cancel(cb: CallbackQuery):
 ###############################################################################
 # Список администраторов группы
 ###############################################################################
-@router.message(lambda msg: msg.text == "Список администраторов группы")
+@router.message(lambda msg: msg.text in {"Список администраторов группы", "Список админов группы"})
 async def list_group_admins_cmd(message: types.Message):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)
@@ -249,7 +249,7 @@ async def list_group_admins_cmd(message: types.Message):
 ###############################################################################
 # Суперадмин: список пользователей группы
 ###############################################################################
-@router.message(lambda msg: msg.text == "Список пользователей группы")
+@router.message(lambda msg: msg.text in {"Список пользователей группы", "Состав группы"})
 async def superadmin_list_group_users_start(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -524,7 +524,7 @@ class GroupAddUserFSM(StatesGroup):
     waiting_for_user = State()
 
 
-@router.message(lambda msg: msg.text == "Добавить пользователя в группу")
+@router.message(lambda msg: msg.text in {"Добавить пользователя в группу", "Добавить в группу"})
 async def add_user_to_group_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -629,7 +629,7 @@ class GroupRemoveUserFSM(StatesGroup):
     waiting_for_user = State()
 
 
-@router.message(lambda msg: msg.text == "Удалить пользователя из группы" and is_superadmin(msg.from_user.id))
+@router.message(lambda msg: msg.text in {"Удалить пользователя из группы", "Удалить из группы"} and is_superadmin(msg.from_user.id))
 async def remove_user_from_group_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -934,7 +934,7 @@ async def set_work_group(cb: CallbackQuery):
 ###############################################################################
 # Удалить пользователя из группы (админ группы)
 ###############################################################################
-@router.message(lambda msg: msg.text == "Удалить пользователя из группы" and not is_superadmin(msg.from_user.id))
+@router.message(lambda msg: msg.text in {"Удалить пользователя из группы", "Удалить из группы"} and not is_superadmin(msg.from_user.id))
 async def remove_user_prompt(message: types.Message):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)

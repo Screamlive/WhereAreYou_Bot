@@ -884,7 +884,14 @@ async def callback_absence_approval(cb: CallbackQuery):
 ###############################################################################
 # Показать отсутствия пользователя (админ)
 ###############################################################################
-@router.message(lambda msg: msg.text in {"Посмотреть отсутствия сотрудника", "Показать отсутствия пользователя"})
+@router.message(
+    lambda msg: msg.text in {
+        "Посмотреть отсутствия сотрудника",
+        "Показать отсутствия пользователя",
+        "Отсутствия пользователя",
+        "Отсутствия сотрудника",
+    }
+)
 async def select_user_for_absences(message: types.Message):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)
@@ -958,7 +965,14 @@ async def cb_show_absences(cb: CallbackQuery):
 ###############################################################################
 # Удалить отсутствие пользователя (админ)
 ###############################################################################
-@router.message(lambda msg: msg.text in {"Удалить отсутствие сотрудника", "Удалить отсутствие пользователя"})
+@router.message(
+    lambda msg: msg.text in {
+        "Удалить отсутствие сотрудника",
+        "Удалить отсутствие пользователя",
+        "Удалить у пользователя",
+        "Удалить у сотрудника",
+    }
+)
 async def admin_delete_absence_start(message: types.Message):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)
@@ -1083,7 +1097,14 @@ class AdminEditAbsenceFSM(StatesGroup):
     waiting_for_comment = State()
 
 
-@router.message(lambda msg: msg.text in {"Изменить отсутствие сотрудника", "Изменить отсутствие пользователя"})
+@router.message(
+    lambda msg: msg.text in {
+        "Изменить отсутствие сотрудника",
+        "Изменить отсутствие пользователя",
+        "Изменить у пользователя",
+        "Изменить у сотрудника",
+    }
+)
 async def admin_edit_absence_start(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)
@@ -1325,7 +1346,7 @@ class CsvExportFSM(StatesGroup):
     waiting_for_end_date = State()
 
 
-@router.message(lambda msg: msg.text in {"Выгрузить отсутствия (CSV)", "Выгрузить отсутствия в CSV"})
+@router.message(lambda msg: msg.text in {"Выгрузить отсутствия (CSV)", "Выгрузить отсутствия в CSV", "Выгрузить в CSV"})
 async def start_csv_export(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
     allowed, group_id, need_select = get_admin_scope(tg_id)
@@ -1492,7 +1513,7 @@ class AddAbsenceForAnotherFSM(StatesGroup):
     waiting_for_comment = State()
 
 
-@router.message(lambda msg: msg.text in {"Добавить отсутствие другому сотруднику", "Добавить отсутствие другому пользователю"})
+@router.message(lambda msg: msg.text in {"Добавить отсутствие другому сотруднику", "Добавить отсутствие другому пользователю", "Добавить другому"})
 async def add_absence_for_another_start(message: types.Message, state: FSMContext):
     if not is_user_approved(message.from_user.id):
         await message.answer("Вы не одобрены, не можете добавлять отсутствие другим.")
