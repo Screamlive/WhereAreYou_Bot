@@ -318,6 +318,98 @@ if HAS_AIOGRAM:
             self.assertIn(group_admin_id, chats)
             self.assertNotIn(super_id, chats)
 
+        async def test_superadmin_overlap_text_respects_selected_scope_for_admin(self):
+            super_id = 120
+            target_id = 121
+            overlap_a_id = 122
+            overlap_b_id = 123
+
+            db_repo.create_group("Dept A", created_by=1)
+            db_repo.create_group("Dept B", created_by=1)
+            groups = db_repo.list_all_groups()
+            group_a = groups[0][0]
+            group_b = groups[1][0]
+
+            db_repo.upsert_user_registration(super_id, "sa120", "Super 120")
+            db_repo.upsert_user_registration(target_id, "target121", "Target 121")
+            db_repo.upsert_user_registration(overlap_a_id, "oa122", "Overlap A")
+            db_repo.upsert_user_registration(overlap_b_id, "ob123", "Overlap B")
+            db_repo.approve_user(super_id)
+            db_repo.approve_user(target_id)
+            db_repo.approve_user(overlap_a_id)
+            db_repo.approve_user(overlap_b_id)
+            db_repo.promote_to_admin(super_id)
+
+            db_repo.add_group_membership(target_id, group_a, "member", created_by=1)
+            db_repo.add_group_membership(target_id, group_b, "member", created_by=1)
+            db_repo.add_group_membership(overlap_a_id, group_a, "member", created_by=1)
+            db_repo.add_group_membership(overlap_b_id, group_b, "member", created_by=1)
+
+            db_repo.create_absence(overlap_a_id, "vacation", "2026-03-01", "2026-03-01", "", "approved")
+            db_repo.create_absence(overlap_b_id, "sick", "2026-03-01", "2026-03-01", "", "approved")
+
+            db_repo.set_superadmin_notification_scope(super_id, group_a)
+
+            text = absences_handlers._collect_overlaps_for_admin(
+                super_id,
+                target_id,
+                "2026-03-01",
+                "2026-03-01",
+                full=True,
+            )
+            self.assertIsNotNone(text)
+            self.assertIn("Пересечения по фильтру суперадмина", text)
+            self.assertIn("Dept A", text)
+            self.assertNotIn("Dept B", text)
+            self.assertIn("Overlap A", text)
+            self.assertNotIn("Overlap B", text)
+
+        async def test_superadmin_overlap_text_respects_selected_scope_for_requester(self):
+            super_id = 130
+            target_id = 131
+            overlap_a_id = 132
+            overlap_b_id = 133
+
+            db_repo.create_group("Dept C", created_by=1)
+            db_repo.create_group("Dept D", created_by=1)
+            groups = db_repo.list_all_groups()
+            group_c = groups[0][0]
+            group_d = groups[1][0]
+
+            db_repo.upsert_user_registration(super_id, "sa130", "Super 130")
+            db_repo.upsert_user_registration(target_id, "target131", "Target 131")
+            db_repo.upsert_user_registration(overlap_a_id, "oa132", "Overlap C")
+            db_repo.upsert_user_registration(overlap_b_id, "ob133", "Overlap D")
+            db_repo.approve_user(super_id)
+            db_repo.approve_user(target_id)
+            db_repo.approve_user(overlap_a_id)
+            db_repo.approve_user(overlap_b_id)
+            db_repo.promote_to_admin(super_id)
+
+            db_repo.add_group_membership(target_id, group_c, "member", created_by=1)
+            db_repo.add_group_membership(target_id, group_d, "member", created_by=1)
+            db_repo.add_group_membership(overlap_a_id, group_c, "member", created_by=1)
+            db_repo.add_group_membership(overlap_b_id, group_d, "member", created_by=1)
+
+            db_repo.create_absence(overlap_a_id, "vacation", "2026-04-01", "2026-04-01", "", "approved")
+            db_repo.create_absence(overlap_b_id, "sick", "2026-04-01", "2026-04-01", "", "approved")
+
+            db_repo.set_superadmin_notification_scope(super_id, group_c)
+
+            text = absences_handlers._collect_overlaps_for_requester(
+                super_id,
+                target_id,
+                "2026-04-01",
+                "2026-04-01",
+                full=True,
+            )
+            self.assertIsNotNone(text)
+            self.assertIn("Пересечения по фильтру суперадмина", text)
+            self.assertIn("Dept C", text)
+            self.assertNotIn("Dept D", text)
+            self.assertIn("Overlap C", text)
+            self.assertNotIn("Overlap D", text)
+
 else:
 
     class TestSecurityHandlers(unittest.TestCase):

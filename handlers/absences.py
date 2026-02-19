@@ -29,6 +29,7 @@ from db_repo import (
     user_exists_in_db,
     is_user_approved,
     get_admin_notification_recipients,
+    get_superadmin_group_notification_ids,
     get_user_groups,
     get_group_members,
     get_approved_users,
@@ -155,14 +156,49 @@ def _collect_overlaps_for_requester(
     end_date: str,
     full: bool = False,
 ) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
     if is_superadmin(requester_id):
+        return _collect_overlaps_for_superadmin_scope(
+            requester_id,
+            target_user_id,
+            start_date,
+            end_date,
+            full=full,
+        )
+    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date, full=full)
+
+
+def _collect_overlaps_for_superadmin_scope(
+    superadmin_id: int,
+    target_user_id: int,
+    start_date: str,
+    end_date: str,
+    full: bool = False,
+) -> str | None:
+    limit = None if full else OVERLAP_ITEMS_LIMIT
+    scope_group_ids = get_superadmin_group_notification_ids(superadmin_id)
+
+    if scope_group_ids is None:
         rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
         if not rows:
             return None
         lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
         return "Пересечения по всем пользователям:\n" + "\n".join(lines)
-    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date, full=full)
+
+    if not scope_group_ids:
+        return None
+
+    target_group_names = {gid: name for gid, name, _role in get_user_groups(target_user_id)}
+    group_rows: list[tuple[str, list[tuple]]] = []
+    for gid in scope_group_ids:
+        if gid not in target_group_names:
+            continue
+        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
+        group_rows.append((target_group_names[gid], rows))
+
+    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
+    if not sections:
+        return None
+    return "Пересечения по фильтру суперадмина:\n\n" + sections
 
 
 def _collect_overlaps_for_admin(
@@ -172,14 +208,16 @@ def _collect_overlaps_for_admin(
     end_date: str,
     full: bool = False,
 ) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
     if is_superadmin(admin_id):
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
-        if not rows:
-            return None
-        lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
-        return "Пересечения по всем пользователям:\n" + "\n".join(lines)
+        return _collect_overlaps_for_superadmin_scope(
+            admin_id,
+            target_user_id,
+            start_date,
+            end_date,
+            full=full,
+        )
 
+    limit = None if full else OVERLAP_ITEMS_LIMIT
     admin_groups = get_admin_groups(admin_id)
     if not admin_groups:
         return None
