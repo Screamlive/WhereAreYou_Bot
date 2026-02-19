@@ -78,10 +78,83 @@ from texts import (
 router = Router()
 bot: Bot | None = None
 
+GROUP_ADD_PAGE_SIZE = 10
+
 
 def set_bot(bot_instance: Bot) -> None:
     global bot
     bot = bot_instance
+
+
+def _paginate_users(
+    users: list[tuple[int, str, str]],
+    page: int,
+    page_size: int = GROUP_ADD_PAGE_SIZE
+) -> tuple[list[tuple[int, str, str]], int, int]:
+    if not users:
+        return [], 0, 0
+    total_pages = (len(users) + page_size - 1) // page_size
+    safe_page = max(0, min(page, total_pages - 1))
+    start = safe_page * page_size
+    return users[start:start + page_size], safe_page, total_pages
+
+
+def _toggle_selected_user(selected_ids: list[int], user_id: int) -> list[int]:
+    selected = set(selected_ids)
+    if user_id in selected:
+        selected.remove(user_id)
+    else:
+        selected.add(user_id)
+    return sorted(selected)
+
+
+def _build_group_add_users_picker(
+    group_id: int,
+    users: list[tuple[int, str, str]],
+    selected_ids: list[int],
+    page: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    page_users, safe_page, total_pages = _paginate_users(users, page)
+    selected_set = set(selected_ids)
+
+    text = (
+        f"Группа: {group_name}\n"
+        f"Выбрано: {len(selected_ids)}\n"
+        f"Страница: {safe_page + 1}/{max(total_pages, 1)}\n\n"
+        "Отметьте сотрудников и нажмите «Готово».\n"
+        "Пользователи, которые уже в группе, будут пропущены."
+    )
+
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    for uid, fullname, username in page_users:
+        uname = f" (@{username})" if username else ""
+        in_group = get_group_membership_role(uid, group_id) is not None
+        marker = "✅" if uid in selected_set else "⬜"
+        suffix = " • уже в группе" if in_group else ""
+        label = f"{marker} {fullname}{uname}{suffix}"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gm_toggle:{uid}")])
+
+    nav_row: list[InlineKeyboardButton] = []
+    if total_pages > 1:
+        if safe_page > 0:
+            nav_row.append(InlineKeyboardButton(text="⬅️ Предыдущая", callback_data=f"gm_page:{safe_page - 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="⬅️ Предыдущая", callback_data="gm_noop"))
+        if safe_page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton(text="Следующая ➡️", callback_data=f"gm_page:{safe_page + 1}"))
+        else:
+            nav_row.append(InlineKeyboardButton(text="Следующая ➡️", callback_data="gm_noop"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    kb_rows.append([InlineKeyboardButton(text="Готово ✅", callback_data="gm_apply")])
+    kb_rows.append([
+        InlineKeyboardButton(text="Сбросить выбор", callback_data="gm_reset"),
+        InlineKeyboardButton(text=TEXT_CANCEL_BUTTON, callback_data="gm_cancel"),
+    ])
+
+    return text, InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 
 ###############################################################################
@@ -558,7 +631,11 @@ async def add_user_to_group_pick_group(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
-    await state.update_data(group_id=group_id)
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
+        await state.clear()
+        return
 
     users = get_approved_users()
     if not users:
@@ -567,23 +644,61 @@ async def add_user_to_group_pick_group(cb: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    kb_rows = []
-    for uid, fullname, username in users:
-        label = f"{fullname}"
-        if username:
-            label += f" (@{username})"
-        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gm_user:{uid}")])
-
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await cb.message.answer(TEXT_SELECT_USER, reply_markup=inline_kb)
+    await state.update_data(
+        gm_group_id=group_id,
+        gm_selected=[],
+        gm_page=0,
+    )
+    picker_text, picker_kb = _build_group_add_users_picker(group_id, users, [], 0)
+    await cb.message.answer(picker_text, reply_markup=picker_kb)
     await state.set_state(GroupAddUserFSM.waiting_for_user)
     await cb.answer()
 
 
-@router.callback_query(lambda c: c.data.startswith("gm_user:"), GroupAddUserFSM.waiting_for_user)
-async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
+@router.callback_query(lambda c: c.data == "gm_noop", GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_noop(cb: CallbackQuery):
+    await cb.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("gm_page:"), GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_change_page(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    group_id = data.get("group_id")
+    group_id = data.get("gm_group_id")
+    if not group_id:
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        next_page = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
+        return
+
+    users = get_approved_users()
+    if not users:
+        await cb.message.edit_text(TEXT_NO_APPROVED_USERS, reply_markup=None)
+        await cb.answer()
+        await state.clear()
+        return
+
+    current_page = data.get("gm_page", 0)
+    _rows, safe_page, _total_pages = _paginate_users(users, next_page)
+    if safe_page == current_page:
+        await cb.answer()
+        return
+
+    selected_ids = data.get("gm_selected", [])
+    picker_text, picker_kb = _build_group_add_users_picker(group_id, users, selected_ids, safe_page)
+    await state.update_data(gm_page=safe_page)
+    await cb.message.edit_text(picker_text, reply_markup=picker_kb)
+    await cb.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("gm_toggle:"), GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_toggle_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("gm_group_id")
     if not group_id:
         await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
         await state.clear()
@@ -595,33 +710,137 @@ async def add_user_to_group_pick_user(cb: CallbackQuery, state: FSMContext):
         await cb.answer(TEXT_INVALID_USER, show_alert=True)
         return
 
-    role = get_group_membership_role(user_id, group_id)
+    selected_ids = _toggle_selected_user(data.get("gm_selected", []), user_id)
+    page = data.get("gm_page", 0)
+    users = get_approved_users()
+    if not users:
+        await cb.message.edit_text(TEXT_NO_APPROVED_USERS, reply_markup=None)
+        await cb.answer()
+        await state.clear()
+        return
 
-    if role:
-        if role == "admin":
-            msg = TEXT_USER_ALREADY_GROUP_ADMIN
-        else:
-            msg = "Пользователь уже состоит в группе."
-    else:
-        add_group_membership(user_id, group_id, "member", cb.from_user.id)
-        msg = "Пользователь добавлен в группу."
-        try:
-            group_name = get_group_name(group_id) or f"ID={group_id}"
-            await bot.send_message(
-                user_id,
-                f"Вы добавлены в группу {group_name}."
-            )
-            await bot.send_message(
-                user_id,
-                TEXT_MENU_UPDATED,
-                reply_markup=get_role_menu(user_id)
-            )
-        except Exception:
-            pass
-
-    await cb.message.answer(msg, reply_markup=get_role_menu(cb.from_user.id))
+    await state.update_data(gm_selected=selected_ids)
+    _rows, safe_page, _total_pages = _paginate_users(users, page)
+    picker_text, picker_kb = _build_group_add_users_picker(group_id, users, selected_ids, safe_page)
+    await state.update_data(gm_page=safe_page)
+    await cb.message.edit_text(picker_text, reply_markup=picker_kb)
     await cb.answer()
+
+
+@router.callback_query(lambda c: c.data == "gm_reset", GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_reset_selection(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("gm_group_id")
+    if not group_id:
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
+        await state.clear()
+        return
+
+    selected_ids = data.get("gm_selected", [])
+    if not selected_ids:
+        await cb.answer("Выбор уже пуст.")
+        return
+
+    page = data.get("gm_page", 0)
+    users = get_approved_users()
+    if not users:
+        await cb.message.edit_text(TEXT_NO_APPROVED_USERS, reply_markup=None)
+        await cb.answer()
+        await state.clear()
+        return
+
+    await state.update_data(gm_selected=[])
+    _rows, safe_page, _total_pages = _paginate_users(users, page)
+    picker_text, picker_kb = _build_group_add_users_picker(group_id, users, [], safe_page)
+    await state.update_data(gm_page=safe_page)
+    await cb.message.edit_text(picker_text, reply_markup=picker_kb)
+    await cb.answer("Выбор сброшен.")
+
+
+@router.callback_query(lambda c: c.data == "gm_apply", GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_apply_selection(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("gm_group_id")
+    if not group_id:
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
+        await state.clear()
+        return
+
+    selected_ids = data.get("gm_selected", [])
+    if not selected_ids:
+        await cb.answer("Сначала выберите хотя бы одного пользователя.", show_alert=True)
+        return
+
+    added_ids: list[int] = []
+    skipped_member = 0
+    skipped_admin = 0
+    errors = 0
+
+    for user_id in selected_ids:
+        role = get_group_membership_role(user_id, group_id)
+        if role == "admin":
+            skipped_admin += 1
+            continue
+        if role:
+            skipped_member += 1
+            continue
+        try:
+            add_group_membership(user_id, group_id, "member", cb.from_user.id)
+            added_ids.append(user_id)
+        except Exception:
+            errors += 1
+
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    if bot:
+        for user_id in added_ids:
+            try:
+                await bot.send_message(
+                    user_id,
+                    f"Вы добавлены в группу {group_name}."
+                )
+                await bot.send_message(
+                    user_id,
+                    TEXT_MENU_UPDATED,
+                    reply_markup=get_role_menu(user_id)
+                )
+            except Exception:
+                pass
+
+    await cb.message.answer(
+        "Итог добавления:\n"
+        f"Группа: {group_name}\n"
+        f"Добавлено: {len(added_ids)}\n"
+        f"Пропущено (уже участник): {skipped_member}\n"
+        f"Пропущено (уже админ): {skipped_admin}\n"
+        f"Ошибки: {errors}"
+    )
+    log_action(
+        cb.from_user.id,
+        (
+            f"bulk_add_users group={group_id} "
+            f"added={len(added_ids)} skipped_member={skipped_member} "
+            f"skipped_admin={skipped_admin} errors={errors}"
+        )
+    )
+
+    users = get_approved_users()
+    await state.update_data(gm_selected=[], gm_page=0)
+    if not users:
+        await cb.message.edit_text(TEXT_NO_APPROVED_USERS, reply_markup=None)
+        await cb.answer()
+        await state.clear()
+        return
+
+    picker_text, picker_kb = _build_group_add_users_picker(group_id, users, [], 0)
+    await cb.message.edit_text(picker_text, reply_markup=picker_kb)
+    await cb.answer()
+
+
+@router.callback_query(lambda c: c.data == "gm_cancel", GroupAddUserFSM.waiting_for_user)
+async def add_user_to_group_cancel(cb: CallbackQuery, state: FSMContext):
     await state.clear()
+    await cb.message.answer("Добавление пользователей в группу завершено.", reply_markup=get_role_menu(cb.from_user.id))
+    await cb.answer()
 
 
 class GroupRemoveUserFSM(StatesGroup):
