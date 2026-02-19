@@ -393,7 +393,7 @@ class GroupAdminAssignFSM(StatesGroup):
     waiting_for_user = State()
 
 
-@router.message(lambda msg: msg.text in {"Назначить админа группы", "Назначить администратора группы"})
+@router.message(lambda msg: msg.text in {"Назначить админа", "Назначить админа группы", "Назначить администратора группы"})
 async def assign_group_admin_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -512,7 +512,13 @@ class GroupAdminRevokeFSM(StatesGroup):
     waiting_for_user = State()
 
 
-@router.message(lambda msg: msg.text in {"Отозвать администратора группы", "Отозвать админа группы"})
+@router.message(
+    lambda msg: msg.text in {
+        "Снять админа группы",
+        "Отозвать администратора группы",
+        "Отозвать админа группы",
+    }
+)
 async def revoke_group_admin_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -1658,7 +1664,7 @@ async def show_my_groups(message: types.Message):
     await message.answer("Ваши группы:\n" + "\n".join(lines))
 
 
-@router.message(lambda msg: msg.text == "Запросить роль наблюдателя")
+@router.message(lambda msg: msg.text in {"Стать наблюдателем", "Запросить роль наблюдателя"})
 async def request_viewer_role_start(message: types.Message):
     user_id = message.from_user.id
     if not user_exists_in_db(user_id):

@@ -197,7 +197,9 @@ async def open_groups_menu(message: types.Message):
     await message.answer(TEXT_SECTION_GROUPS, reply_markup=user_groups_menu)
 
 
-@router.message(lambda msg: msg.text in {"Отсутствия для другого пользователя", "Для другого пользователя"})
+@router.message(
+    lambda msg: msg.text in {"Отсутствия для другого пользователя", "Для другого пользователя", "Для другого"}
+)
 async def open_other_absences_menu(message: types.Message):
     if not is_user_approved(message.from_user.id):
         await message.answer(TEXT_NOT_APPROVED_SHORT)

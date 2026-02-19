@@ -58,7 +58,7 @@ class TestKeyboardLayout(unittest.TestCase):
     def test_groups_menu_contains_viewer_role_request(self):
         rows = _row_texts(keyboards.user_groups_menu)
         flattened = {text for row in rows for text in row}
-        self.assertIn("Запросить роль наблюдателя", flattened)
+        self.assertIn("Стать наблюдателем", flattened)
 
     def test_viewer_main_menu_requests_read_only_label(self):
         rows = _row_texts(keyboards.group_viewer_main_menu)
