@@ -24,7 +24,6 @@ from db_repo import (
 from keyboards import (
     BACK_BUTTON_TEXT,
     not_approved_menu,
-    superadmin_main_menu,
     group_admin_main_menu,
     group_admin_select_menu,
     my_absences_menu,
@@ -62,6 +61,20 @@ from texts import (
 router = Router()
 
 
+def _superadmin_filter_label(user_id: int) -> str:
+    group_id = get_last_group_id(user_id)
+    if not group_id:
+        return "Текущий фильтр: глобально"
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    return f"Текущий фильтр: {group_name}"
+
+
+def _is_filter_menu_button(text: str | None) -> bool:
+    if not text:
+        return False
+    return text in {"Рабочая группа", "Фильтр по группе"} or text.startswith("Фильтр:")
+
+
 ###############################################################################
 # НАВИГАЦИЯ ПО МЕНЮ
 ###############################################################################
@@ -75,7 +88,10 @@ async def open_superadmin_users_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
         return
-    await message.answer("Раздел «Управление пользователями».", reply_markup=superadmin_users_menu)
+    await message.answer(
+        f"Раздел «Управление пользователями».\n{_superadmin_filter_label(message.from_user.id)}",
+        reply_markup=superadmin_users_menu
+    )
 
 
 @router.message(lambda msg: msg.text in {"Управление группами", "Группы (упр.)"})
@@ -83,7 +99,10 @@ async def open_superadmin_groups_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
         return
-    await message.answer("Раздел «Управление группами».", reply_markup=superadmin_groups_menu)
+    await message.answer(
+        f"Раздел «Управление группами».\n{_superadmin_filter_label(message.from_user.id)}",
+        reply_markup=superadmin_groups_menu
+    )
 
 
 @router.message(lambda msg: msg.text in {"Управление отсутствиями", "Отсутствия (упр.)"})
@@ -91,7 +110,10 @@ async def open_superadmin_absences_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
         return
-    await message.answer("Раздел «Управление отсутствиями».", reply_markup=superadmin_absences_menu)
+    await message.answer(
+        f"Раздел «Управление отсутствиями».\n{_superadmin_filter_label(message.from_user.id)}",
+        reply_markup=superadmin_absences_menu
+    )
 
 
 @router.message(lambda msg: msg.text in {"Управление суперадминами", "Суперадмины"})
@@ -99,10 +121,13 @@ async def open_superadmin_admins_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
         return
-    await message.answer("Раздел «Управление суперадминами».", reply_markup=superadmin_superadmins_menu)
+    await message.answer(
+        f"Раздел «Управление суперадминами».\n{_superadmin_filter_label(message.from_user.id)}",
+        reply_markup=superadmin_superadmins_menu
+    )
 
 
-@router.message(lambda msg: msg.text in {"Рабочая группа", "Фильтр по группе"})
+@router.message(lambda msg: _is_filter_menu_button(msg.text))
 async def open_superadmin_work_group_menu(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -111,6 +136,7 @@ async def open_superadmin_work_group_menu(message: types.Message):
         "Раздел «Фильтр по группе». Он влияет на списки/заявки в интерфейсе суперадмина, права не меняет.",
         reply_markup=superadmin_work_group_menu
     )
+    await message.answer(_superadmin_filter_label(message.from_user.id))
 
 
 @router.message(lambda msg: msg.text in {"Заявки в группу", "Заявки (просмотр)"})
@@ -240,7 +266,10 @@ async def cmd_start(message: types.Message):
         return
 
     if is_superadmin(tg_id):
-        await message.answer("Здравствуйте, Суперадминистратор!", reply_markup=superadmin_main_menu)
+        await message.answer(
+            f"Здравствуйте, Суперадминистратор!\n{_superadmin_filter_label(tg_id)}",
+            reply_markup=get_role_menu(tg_id)
+        )
         return
 
     managed_groups = get_view_groups(tg_id)
@@ -290,6 +319,12 @@ async def cmd_start(message: types.Message):
 @router.message(lambda msg: msg.text == BACK_BUTTON_TEXT)
 async def back_to_menu(message: types.Message, state: FSMContext):
     await state.clear()
+    if is_superadmin(message.from_user.id):
+        await message.answer(
+            f"{TEXT_BACK_TO_MENU}\n{_superadmin_filter_label(message.from_user.id)}",
+            reply_markup=get_role_menu(message.from_user.id)
+        )
+        return
     await message.answer(TEXT_BACK_TO_MENU, reply_markup=get_role_menu(message.from_user.id))
 
 

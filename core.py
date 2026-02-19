@@ -9,11 +9,12 @@ from db_repo import (
     get_user_groups,
     get_last_group_id,
     set_last_group_id,
+    get_group_name,
     get_group_membership_role,
     is_user_admin,
 )
 from keyboards import (
-    superadmin_main_menu,
+    build_superadmin_main_menu,
     group_admin_main_menu,
     group_viewer_main_menu,
     user_main_menu,
@@ -98,7 +99,11 @@ def get_admin_scope(tg_id: int) -> tuple[bool, int | None, bool]:
 
 def get_role_menu(tg_id: int) -> ReplyKeyboardMarkup:
     if is_superadmin(tg_id):
-        return superadmin_main_menu
+        group_id = get_last_group_id(tg_id)
+        scope_name = "глобально"
+        if group_id:
+            scope_name = get_group_name(group_id) or f"ID={group_id}"
+        return build_superadmin_main_menu(scope_name)
     groups = get_user_groups(tg_id)
     if not groups:
         return no_group_menu

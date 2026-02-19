@@ -20,11 +20,10 @@ from core import (
 )
 from db_repo import (
     log_action,
-    get_admins,
+    get_admin_notification_recipients,
     list_all_groups,
     get_group_name,
     get_group_members,
-    get_group_admins,
     user_exists_in_db,
     is_user_approved,
     user_in_group,
@@ -53,6 +52,7 @@ from db_repo import (
     get_last_group_id,
     set_last_group_id,
     is_group_admin,
+    set_superadmin_notification_scope,
 )
 from texts import (
     TEXT_NO_RIGHTS,
@@ -1504,6 +1504,7 @@ async def set_work_group_global(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
     set_last_group_id(message.from_user.id, None)
+    set_superadmin_notification_scope(message.from_user.id, None)
     await message.answer(
         "Режим суперадмина: глобально. Права не изменены, групповой фильтр сброшен.",
         reply_markup=get_role_menu(message.from_user.id)
@@ -1520,6 +1521,7 @@ async def set_work_group(cb: CallbackQuery):
             await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
             return
         set_last_group_id(user_id, None)
+        set_superadmin_notification_scope(user_id, None)
         await cb.message.answer("Режим суперадмина: глобально. Права не изменены, фильтр сброшен.")
         await cb.answer()
         return
@@ -1544,6 +1546,7 @@ async def set_work_group(cb: CallbackQuery):
         return
 
     if is_superadmin(user_id):
+        set_superadmin_notification_scope(user_id, group_id)
         await cb.message.answer(
             f"Режим суперадмина: фильтр по группе «{group_name}». Права не изменены."
         )
@@ -1711,8 +1714,7 @@ async def request_viewer_role(cb: CallbackQuery):
     await cb.answer()
     log_action(user_id, f"group_role_request create #{req_id} viewer group={group_id}")
 
-    recipients = set(get_admins())
-    recipients.update(get_group_admins(group_id))
+    recipients = set(get_admin_notification_recipients([group_id]))
     user_display = get_user_fullname(user_id)
     for admin_id in recipients:
         kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -1792,7 +1794,7 @@ async def request_join_group(cb: CallbackQuery):
         f"Запрос на вступление в группу «{group_name}»\n"
         f"От: {get_user_fullname(user_id)}"
     )
-    admin_ids = set(get_group_admins(group_id) + get_admins())
+    admin_ids = set(get_admin_notification_recipients([group_id]))
     for admin_id in admin_ids:
         try:
             await bot.send_message(admin_id, text_admin, reply_markup=kb)
@@ -1862,7 +1864,7 @@ async def request_leave_group(cb: CallbackQuery):
         f"Запрос на выход из группы «{group_name}»\n"
         f"От: {get_user_fullname(user_id)}"
     )
-    admin_ids = set(get_group_admins(group_id) + get_admins())
+    admin_ids = set(get_admin_notification_recipients([group_id]))
     for admin_id in admin_ids:
         try:
             await bot.send_message(admin_id, text_admin, reply_markup=kb)

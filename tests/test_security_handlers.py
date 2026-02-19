@@ -278,6 +278,46 @@ if HAS_AIOGRAM:
             self.assertTrue(admin_msgs)
             self.assertTrue(any("Пересечения" in text for text in admin_msgs))
 
+        async def test_superadmin_group_filter_blocks_realtime_absence_notifications(self):
+            super_id = 100
+            group_admin_id = 101
+            requester_id = 102
+
+            db_repo.create_group("Dept A", created_by=1)
+            db_repo.create_group("Dept B", created_by=1)
+            groups = db_repo.list_all_groups()
+            group_a = groups[0][0]
+            group_b = groups[1][0]
+
+            db_repo.upsert_user_registration(super_id, "sa100", "Super 100")
+            db_repo.approve_user(super_id)
+            db_repo.promote_to_admin(super_id)
+            db_repo.add_group_membership(super_id, group_b, "admin", created_by=1)
+            db_repo.set_superadmin_notification_scope(super_id, group_a)
+
+            db_repo.upsert_user_registration(group_admin_id, "ga101", "Group Admin 101")
+            db_repo.approve_user(group_admin_id)
+            db_repo.add_group_membership(group_admin_id, group_b, "admin", created_by=1)
+
+            db_repo.upsert_user_registration(requester_id, "u102", "User 102")
+            db_repo.approve_user(requester_id)
+            db_repo.add_group_membership(requester_id, group_b, "member", created_by=1)
+
+            state = self.make_state(requester_id)
+            await state.update_data(
+                category="dayoff",
+                start_date="2026-02-01",
+                end_date="2026-02-01",
+            )
+            await state.set_state(absences_handlers.AbsenceRequestFSM.waiting_for_comment)
+
+            msg = FakeMessage("-", requester_id)
+            await absences_handlers.process_comment(msg, state)
+
+            chats = [m["chat_id"] for m in self.bot.sent]
+            self.assertIn(group_admin_id, chats)
+            self.assertNotIn(super_id, chats)
+
 else:
 
     class TestSecurityHandlers(unittest.TestCase):

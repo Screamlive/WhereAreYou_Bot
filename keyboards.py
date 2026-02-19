@@ -2,6 +2,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 BACK_BUTTON_TEXT = "Вернуться в меню"
 TWO_COLUMN_MAX_LABEL_LEN = 22
+FILTER_SCOPE_LABEL_MAX_LEN = 24
 
 
 def _build_menu(rows: list[list[str]]) -> ReplyKeyboardMarkup:
@@ -16,17 +17,33 @@ def _build_menu(rows: list[list[str]]) -> ReplyKeyboardMarkup:
         normalized_rows.append([KeyboardButton(text=text) for text in row])
     return ReplyKeyboardMarkup(keyboard=normalized_rows, resize_keyboard=True)
 
+def _shorten_label(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def build_superadmin_filter_button(scope_name: str | None) -> str:
+    normalized = (scope_name or "глобально").strip() or "глобально"
+    short = _shorten_label(normalized, FILTER_SCOPE_LABEL_MAX_LEN)
+    return f"Фильтр: {short}"
+
+
+def build_superadmin_main_menu(scope_name: str | None) -> ReplyKeyboardMarkup:
+    return _build_menu([
+        ["Отсутствия на сегодня", "Мои отсутствия"],
+        ["Отсутствия (упр.)", "Группы (упр.)"],
+        ["Пользователи (упр.)", "Суперадмины"],
+        [build_superadmin_filter_button(scope_name)],
+    ])
+
+
 not_approved_menu = _build_menu([
     ["Зарегистрироваться"],
 ])
 
 # Главные меню
-superadmin_main_menu = _build_menu([
-    ["Отсутствия на сегодня", "Мои отсутствия"],
-    ["Отсутствия (упр.)", "Группы (упр.)"],
-    ["Пользователи (упр.)", "Суперадмины"],
-    ["Фильтр по группе"],
-])
+superadmin_main_menu = build_superadmin_main_menu("глобально")
 
 group_admin_main_menu = _build_menu([
     ["Отсутствия на сегодня", "Мои отсутствия"],

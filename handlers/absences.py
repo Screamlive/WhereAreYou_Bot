@@ -28,9 +28,8 @@ from db_repo import (
     log_action,
     user_exists_in_db,
     is_user_approved,
-    get_admins,
+    get_admin_notification_recipients,
     get_user_groups,
-    get_group_admins,
     get_group_members,
     get_approved_users,
     get_user_fullname,
@@ -196,6 +195,11 @@ def _collect_overlaps_for_admin(
     if not sections:
         return None
     return "Пересечения по группе:\n\n" + sections
+
+
+def _get_absence_recipients(target_user_id: int) -> set[int]:
+    group_ids = [gid for gid, _name, _role in get_user_groups(target_user_id)]
+    return set(get_admin_notification_recipients(group_ids))
 
 
 async def _send_long_message(chat_id: int, text: str, reply_markup=None) -> None:
@@ -387,10 +391,8 @@ async def process_comment(message: types.Message, state: FSMContext):
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
-    # Уведомим админов групп пользователя и суперадминов
-    admin_ids = set(get_admins())
-    for gid, _name, _role in get_user_groups(user_id):
-        admin_ids.update(get_group_admins(gid))
+    # Уведомим админов групп пользователя и суперадминов (с учетом фильтра суперадмина).
+    admin_ids = _get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -448,9 +450,7 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
-    admin_ids = set(get_admins())
-    for gid, _name, _role in get_user_groups(user_id):
-        admin_ids.update(get_group_admins(gid))
+    admin_ids = _get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -570,10 +570,8 @@ async def request_delete_absence(cb: CallbackQuery):
         await cb.answer("Удалять можно только 'approved'.", show_alert=True)
         return
 
-    # Отправим запрос админам групп пользователя и суперадминам
-    admin_ids = set(get_admins())
-    for gid, _name, _role in get_user_groups(user_id):
-        admin_ids.update(get_group_admins(gid))
+    # Отправим запрос админам групп пользователя и суперадминам (с учетом фильтра суперадмина).
+    admin_ids = _get_absence_recipients(user_id)
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     for admin_id in admin_ids:
@@ -735,9 +733,7 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
         InlineKeyboardButton(text="Отклонить", callback_data=f"decline_edit:{req_id}")
     ]])
-    admin_ids = set(get_admins())
-    for gid, _name, _role in get_user_groups(user_id):
-        admin_ids.update(get_group_admins(gid))
+    admin_ids = _get_absence_recipients(user_id)
     for admin_id in admin_ids:
         try:
             await _send_admin_request_with_overlaps(
@@ -1780,9 +1776,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
 
-    admin_ids = set(get_admins())
-    for gid, _name, _role in get_user_groups(target_user_id):
-        admin_ids.update(get_group_admins(gid))
+    admin_ids = _get_absence_recipients(target_user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [

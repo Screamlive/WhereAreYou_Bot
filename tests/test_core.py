@@ -38,7 +38,9 @@ if HAS_AIOGRAM:
             db_repo.promote_to_admin(tg_id)
 
             menu = core.get_role_menu(tg_id)
-            self.assertIs(menu, keyboards.superadmin_main_menu)
+            rows = [[btn.text for btn in row] for row in menu.keyboard]
+            self.assertEqual(rows[0], ["Отсутствия на сегодня", "Мои отсутствия"])
+            self.assertTrue(any(text.startswith("Фильтр:") for row in rows for text in row))
 
         def test_role_menu_no_group(self):
             tg_id = 2

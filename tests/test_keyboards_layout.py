@@ -17,8 +17,7 @@ class TestKeyboardLayout(unittest.TestCase):
     def test_today_button_is_on_top_superadmin(self):
         rows = _row_texts(keyboards.superadmin_main_menu)
         self.assertEqual(rows[0][0], "Отсутствия на сегодня")
-        flattened = {text for row in rows for text in row}
-        self.assertIn("Фильтр по группе", flattened)
+        self.assertTrue(any(text.startswith("Фильтр:") for row in rows for text in row))
 
     def test_today_button_is_on_top_group_admin(self):
         rows = _row_texts(keyboards.group_admin_main_menu)
