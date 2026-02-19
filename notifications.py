@@ -9,6 +9,9 @@ from db_repo import (
     get_admins,
     get_group_admins,
     get_user_fullname,
+    get_group_name,
+    get_superadmin_group_notification_ids,
+    get_superadmin_notification_mode,
     list_all_groups,
     list_pending_absences,
     list_pending_group_requests,
@@ -47,16 +50,46 @@ def build_group_admin_notifications() -> dict[int, str]:
 
 def build_superadmin_notifications() -> dict[int, str]:
     pending_users = list_pending_user_ids()
-    if not pending_users:
-        return {}
+    notifications: dict[int, str] = {}
 
-    lines = [f"- {get_user_fullname(uid)} (ID={uid})" for uid in pending_users]
-    text = (
-        "Ежедневная сводка:\n"
-        f"Новых заявок на регистрацию: {len(pending_users)}\n\n"
-        "Список:\n" + "\n".join(lines)
-    )
-    return {admin_id: text for admin_id in get_admins()}
+    for admin_id in get_admins():
+        mode = get_superadmin_notification_mode(admin_id)
+        scope_group_ids = get_superadmin_group_notification_ids(admin_id)
+
+        group_sections: list[str] = []
+        if scope_group_ids is None:
+            groups = list_all_groups()
+        else:
+            groups = [(gid, get_group_name(gid) or f"ID={gid}") for gid in scope_group_ids]
+
+        for group_id, group_name in groups:
+            pending_joins = list_pending_group_requests("join", group_id)
+            pending_absences = list_pending_absences(group_id)
+            if not pending_joins and not pending_absences:
+                continue
+            lines = [f"Группа «{group_name}»:"]
+            if pending_joins:
+                lines.append(f"- заявки на вступление: {len(pending_joins)}")
+            if pending_absences:
+                lines.append(f"- заявки на отсутствие: {len(pending_absences)}")
+            group_sections.append("\n".join(lines))
+
+        if not pending_users and not group_sections:
+            continue
+
+        parts = [f"Ежедневная сводка суперадмина (режим: {mode}):"]
+        if pending_users:
+            lines = [f"- {get_user_fullname(uid)} (ID={uid})" for uid in pending_users]
+            parts.append(
+                f"Новых заявок на регистрацию: {len(pending_users)}\n\n"
+                "Список:\n" + "\n".join(lines)
+            )
+        if group_sections:
+            parts.append("Групповые заявки:\n\n" + "\n\n".join(group_sections))
+
+        notifications[admin_id] = "\n\n".join(parts)
+
+    return notifications
 
 
 async def send_daily_notifications() -> None:

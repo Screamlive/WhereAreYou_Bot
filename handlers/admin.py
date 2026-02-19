@@ -10,7 +10,7 @@ from aiogram.types import (
     CallbackQuery,
 )
 
-from core import get_admin_scope, get_role_menu, is_superadmin
+from core import get_admin_scope, get_group_scope, get_role_menu, is_superadmin
 from db_repo import (
     log_action,
     user_exists_in_db,
@@ -227,7 +227,7 @@ async def cmd_decline(message: types.Message):
 ###############################################################################
 # "Список запросов" (неодобренных), "Список пользователей"
 ###############################################################################
-@router.message(lambda msg: msg.text in {"Список запросов", "Список запросов (регистрация)"})
+@router.message(lambda msg: msg.text in {"Список запросов", "Список запросов (регистрация)", "Заявки регистрации"})
 async def list_pending_users(message: types.Message):
     if not is_user_admin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -256,8 +256,8 @@ async def list_pending_users(message: types.Message):
 @router.message(lambda msg: msg.text in {"Список сотрудников", "Список пользователей"})
 async def list_approved_users(message: types.Message):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, _can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -271,7 +271,7 @@ async def list_approved_users(message: types.Message):
             return
         text_list = "Сотрудники группы:\n"
         for uid, fullname, username, role in members:
-            role_label = "админ" if role == "admin" else "участник"
+            role_label = "админ" if role == "admin" else ("наблюдатель" if role == "viewer" else "участник")
             uname = f" (@{username})" if username else ""
             text_list += f"- {fullname}{uname} (ID={uid}, {role_label})\n"
         await message.answer(text_list)
@@ -303,7 +303,7 @@ class SuperadminShowUsernameFSM(StatesGroup):
     waiting_for_user = State()
 
 
-@router.message(lambda msg: msg.text == "Изменить имя пользователя")
+@router.message(lambda msg: msg.text in {"Изменить имя пользователя", "Изменить ФИО"})
 async def superadmin_change_name_start(message: types.Message, state: FSMContext):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -417,7 +417,7 @@ async def superadmin_show_username_pick_user(cb: CallbackQuery, state: FSMContex
 ###############################################################################
 # Суперадмин: удалить пользователя из бота
 ###############################################################################
-@router.message(lambda msg: msg.text == "Удалить пользователя из бота")
+@router.message(lambda msg: msg.text in {"Удалить пользователя из бота", "Удалить из бота"})
 async def superadmin_delete_user_start(message: types.Message):
     if not is_superadmin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)
@@ -502,7 +502,7 @@ async def superadmin_delete_user_cancel(cb: CallbackQuery):
 ###############################################################################
 # Назначить админом /make_admin, Отозвать админа /revoke_admin, Список админов
 ###############################################################################
-@router.message(lambda msg: msg.text in {"Назначить админом", "Добавить права суперадминистратора"})
+@router.message(lambda msg: msg.text in {"Назначить админом", "Добавить права суперадминистратора", "Сделать суперадмином"})
 async def pick_user_for_admin(message: types.Message):
     """
     Шаг 1: админ нажимает "Назначить админом".
@@ -553,7 +553,7 @@ async def callback_make_admin_user(cb: CallbackQuery):
     await cb.answer()
 
 
-@router.message(lambda msg: msg.text in {"Отозвать админа", "Отозвать права суперадминистратора"})
+@router.message(lambda msg: msg.text in {"Отозвать админа", "Отозвать права суперадминистратора", "Снять суперадмина"})
 async def pick_admin_to_revoke(message: types.Message):
     """
     Шаг 1: админ нажимает "Отозвать админа".
@@ -607,7 +607,7 @@ async def callback_revoke_admin_user(cb: CallbackQuery):
     await cb.answer()
 
 
-@router.message(lambda msg: msg.text in {"Список админов", "Список суперадминистраторов"})
+@router.message(lambda msg: msg.text in {"Список админов", "Список суперадминистраторов", "Список суперадминов"})
 async def list_admins_cmd(message: types.Message):
     if not is_user_admin(message.from_user.id):
         await message.answer(TEXT_NO_RIGHTS)

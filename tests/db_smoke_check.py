@@ -38,6 +38,9 @@ def main() -> int:
         "groups",
         "group_memberships",
         "group_requests",
+        "group_role_requests",
+        "superadmin_notification_prefs",
+        "superadmin_notification_groups",
     }
     missing = expected - tables
 

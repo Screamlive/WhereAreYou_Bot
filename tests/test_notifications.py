@@ -69,6 +69,39 @@ class TestNotifications(unittest.TestCase):
         notes_sa = notifications.build_superadmin_notifications()
         self.assertEqual(notes_sa, {})
 
+    def test_superadmin_notifications_respect_selected_scope(self):
+        super_id = 30
+        db_repo.upsert_user_registration(super_id, "sa30", "Super Admin 30")
+        db_repo.promote_to_admin(super_id)
+        db_repo.approve_user(super_id)
+
+        db_repo.create_group("Dept A", created_by=1)
+        db_repo.create_group("Dept B", created_by=1)
+        groups = db_repo.list_all_groups()
+        group_a = groups[0][0]
+        group_b = groups[1][0]
+
+        user_a = 31
+        user_b = 32
+        db_repo.upsert_user_registration(user_a, "u31", "User A")
+        db_repo.upsert_user_registration(user_b, "u32", "User B")
+        db_repo.approve_user(user_a)
+        db_repo.approve_user(user_b)
+
+        db_repo.add_group_membership(user_a, group_a, "member", created_by=1)
+        db_repo.add_group_membership(user_b, group_b, "member", created_by=1)
+
+        db_repo.create_group_request(user_a, group_a, "join", requested_by=user_a)
+        db_repo.create_group_request(user_b, group_b, "join", requested_by=user_b)
+
+        db_repo.set_superadmin_notification_scope(super_id, group_a)
+        notes = notifications.build_superadmin_notifications()
+
+        self.assertIn(super_id, notes)
+        self.assertIn("режим: selected_groups", notes[super_id])
+        self.assertIn("Dept A", notes[super_id])
+        self.assertNotIn("Dept B", notes[super_id])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,8 @@ import sqlite3
 
 from config import DB_NAME
 
+VALID_SUPERADMIN_NOTIFY_MODES = {"global", "group_only", "selected_groups"}
+
 
 def log_action(user_id: int, action: str) -> None:
     """
@@ -55,6 +57,144 @@ def get_admins() -> list[int]:
     rows = cur.fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+def get_superadmin_notification_mode(user_id: int) -> str:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT mode
+        FROM superadmin_notification_prefs
+        WHERE user_id=?
+        """,
+        (user_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return "global"
+    mode = row[0]
+    return mode if mode in VALID_SUPERADMIN_NOTIFY_MODES else "global"
+
+
+def get_superadmin_notification_groups(user_id: int) -> list[int]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT group_id
+        FROM superadmin_notification_groups
+        WHERE user_id=?
+        ORDER BY group_id
+        """,
+        (user_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def set_superadmin_notification_mode(user_id: int, mode: str) -> bool:
+    if mode not in VALID_SUPERADMIN_NOTIFY_MODES:
+        return False
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO superadmin_notification_prefs (user_id, mode, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            mode=excluded.mode,
+            updated_at=excluded.updated_at
+        """,
+        (user_id, mode, datetime.datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def set_superadmin_notification_groups(user_id: int, group_ids: list[int]) -> None:
+    unique_group_ids = sorted(set(group_ids))
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM superadmin_notification_groups WHERE user_id=?", (user_id,))
+    for group_id in unique_group_ids:
+        cur.execute(
+            """
+            INSERT INTO superadmin_notification_groups (user_id, group_id)
+            VALUES (?, ?)
+            """,
+            (user_id, group_id)
+        )
+    conn.commit()
+    conn.close()
+
+
+def set_superadmin_notification_scope(user_id: int, group_id: int | None) -> None:
+    if group_id is None:
+        set_superadmin_notification_mode(user_id, "global")
+        set_superadmin_notification_groups(user_id, [])
+        return
+    set_superadmin_notification_mode(user_id, "selected_groups")
+    set_superadmin_notification_groups(user_id, [group_id])
+
+
+def get_superadmin_group_notification_ids(user_id: int) -> list[int] | None:
+    mode = get_superadmin_notification_mode(user_id)
+    if mode == "global":
+        return None
+    if mode == "selected_groups":
+        return get_superadmin_notification_groups(user_id)
+
+    # mode == "group_only"
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT group_id
+        FROM group_memberships
+        WHERE user_id=? AND role IN ('admin', 'viewer')
+        ORDER BY group_id
+        """,
+        (user_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_superadmins_for_groups(group_ids: list[int]) -> list[int]:
+    target_group_ids = set(group_ids)
+    recipients: list[int] = []
+    for admin_id in get_admins():
+        allowed_group_ids = get_superadmin_group_notification_ids(admin_id)
+        if allowed_group_ids is None:
+            recipients.append(admin_id)
+            continue
+        if target_group_ids.intersection(allowed_group_ids):
+            recipients.append(admin_id)
+    return recipients
+
+
+def get_admin_notification_recipients(group_ids: list[int]) -> list[int]:
+    target_group_ids = set(group_ids)
+    superadmin_recipients = set(get_superadmins_for_groups(group_ids))
+    recipients = set(superadmin_recipients)
+
+    for group_id in target_group_ids:
+        for admin_id in get_group_admins(group_id):
+            if is_user_admin(admin_id):
+                # Для суперадмина приоритет у его notification scope,
+                # даже если он одновременно админ этой группы.
+                if admin_id in superadmin_recipients:
+                    recipients.add(admin_id)
+                continue
+            recipients.add(admin_id)
+
+    return sorted(recipients)
 
 
 def get_last_group_id(tg_id: int) -> int | None:
@@ -155,6 +295,22 @@ def is_group_admin(tg_id: int, group_id: int) -> bool:
         SELECT 1
         FROM group_memberships
         WHERE user_id=? AND group_id=? AND role='admin'
+        """,
+        (tg_id, group_id)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
+def is_group_viewer(tg_id: int, group_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1
+        FROM group_memberships
+        WHERE user_id=? AND group_id=? AND role='viewer'
         """,
         (tg_id, group_id)
     )
@@ -269,6 +425,8 @@ def delete_group(group_id: int) -> None:
     cur = conn.cursor()
     cur.execute("DELETE FROM group_memberships WHERE group_id=?", (group_id,))
     cur.execute("DELETE FROM group_requests WHERE group_id=?", (group_id,))
+    cur.execute("DELETE FROM group_role_requests WHERE group_id=?", (group_id,))
+    cur.execute("DELETE FROM superadmin_notification_groups WHERE group_id=?", (group_id,))
     cur.execute("UPDATE users SET last_group_id=NULL WHERE last_group_id=?", (group_id,))
     cur.execute("DELETE FROM groups WHERE id=?", (group_id,))
     conn.commit()
@@ -331,6 +489,24 @@ def list_group_admin_users(group_id: int) -> list[tuple[int, str, str]]:
         FROM group_memberships gm
         JOIN users u ON u.telegram_id = gm.user_id
         WHERE gm.group_id=? AND gm.role='admin'
+        ORDER BY u.fullname
+        """,
+        (group_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def list_group_viewer_users(group_id: int) -> list[tuple[int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.telegram_id, u.fullname, u.username
+        FROM group_memberships gm
+        JOIN users u ON u.telegram_id = gm.user_id
+        WHERE gm.group_id=? AND gm.role='viewer'
         ORDER BY u.fullname
         """,
         (group_id,)
@@ -441,6 +617,104 @@ def create_group_request(user_id: int, group_id: int, req_type: str, requested_b
     conn.commit()
     conn.close()
     return req_id
+
+
+def has_pending_group_role_request(tg_id: int, group_id: int, target_role: str) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1
+        FROM group_role_requests
+        WHERE user_id=? AND group_id=? AND target_role=? AND status='pending'
+        """,
+        (tg_id, group_id, target_role)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
+def create_group_role_request(user_id: int, group_id: int, target_role: str, requested_by: int) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO group_role_requests (user_id, group_id, target_role, status, requested_at, requested_by)
+        VALUES (?, ?, ?, 'pending', ?, ?)
+        """,
+        (user_id, group_id, target_role, datetime.datetime.now().isoformat(), requested_by)
+    )
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return req_id
+
+
+def list_pending_group_role_requests(
+    target_role: str,
+    group_id: int | None = None
+) -> list[tuple[int, int, str, str, int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT grr.id, grr.user_id, u.fullname, u.username, g.id, g.name, grr.target_role
+            FROM group_role_requests grr
+            JOIN users u ON u.telegram_id = grr.user_id
+            JOIN groups g ON g.id = grr.group_id
+            WHERE grr.status='pending' AND grr.group_id=? AND grr.target_role=?
+            ORDER BY u.fullname
+            """,
+            (group_id, target_role)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT grr.id, grr.user_id, u.fullname, u.username, g.id, g.name, grr.target_role
+            FROM group_role_requests grr
+            JOIN users u ON u.telegram_id = grr.user_id
+            JOIN groups g ON g.id = grr.group_id
+            WHERE grr.status='pending' AND grr.target_role=?
+            ORDER BY g.name, u.fullname
+            """,
+            (target_role,)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_group_role_request(req_id: int) -> tuple[int, int, str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, group_id, target_role, status
+        FROM group_role_requests
+        WHERE id=?
+        """,
+        (req_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def set_group_role_request_status(req_id: int, status: str, reviewed_at: str, reviewed_by: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE group_role_requests
+        SET status=?, reviewed_at=?, reviewed_by=?
+        WHERE id=?
+        """,
+        (status, reviewed_at, reviewed_by, req_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 def create_absence(
@@ -803,6 +1077,9 @@ def delete_user_and_related(tg_id: int) -> None:
     cur = conn.cursor()
     cur.execute("DELETE FROM group_memberships WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM group_requests WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM group_role_requests WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM superadmin_notification_groups WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM superadmin_notification_prefs WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM absences WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM edit_requests WHERE user_id=?", (tg_id,))
     cur.execute("UPDATE users SET last_group_id=NULL WHERE telegram_id=?", (tg_id,))

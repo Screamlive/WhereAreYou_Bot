@@ -84,6 +84,35 @@ class TestDbRepo(unittest.TestCase):
         row = db_repo.get_group_request(req_id)
         self.assertEqual(row[3], "approved")
 
+    def test_group_role_requests(self):
+        self.assertTrue(db_repo.create_group("Team Role", created_by=1))
+        group_id, _name = db_repo.list_all_groups()[0]
+        user_id = 3010
+        db_repo.upsert_user_registration(user_id, "u3010", "User 3010")
+        db_repo.approve_user(user_id)
+        db_repo.add_group_membership(user_id, group_id, "member", created_by=1)
+
+        self.assertFalse(db_repo.is_group_viewer(user_id, group_id))
+        self.assertFalse(db_repo.has_pending_group_role_request(user_id, group_id, "viewer"))
+
+        req_id = db_repo.create_group_role_request(user_id, group_id, "viewer", requested_by=user_id)
+        self.assertTrue(db_repo.has_pending_group_role_request(user_id, group_id, "viewer"))
+
+        pending = db_repo.list_pending_group_role_requests("viewer", group_id)
+        self.assertTrue(any(r[0] == req_id for r in pending))
+
+        row = db_repo.get_group_role_request(req_id)
+        self.assertEqual(row, (user_id, group_id, "viewer", "pending"))
+
+        db_repo.set_group_role_request_status(req_id, "approved", "2026-01-01T00:00:00", 1)
+        row = db_repo.get_group_role_request(req_id)
+        self.assertEqual(row[3], "approved")
+
+        self.assertTrue(db_repo.update_group_membership_role(user_id, group_id, "viewer"))
+        self.assertTrue(db_repo.is_group_viewer(user_id, group_id))
+        viewers = db_repo.list_group_viewer_users(group_id)
+        self.assertTrue(any(v[0] == user_id for v in viewers))
+
     def test_absences_and_edits(self):
         tg_id = 4001
         db_repo.upsert_user_registration(tg_id, "u3", "User Three")
@@ -224,6 +253,68 @@ class TestDbRepo(unittest.TestCase):
         group_a_rows = db_repo.list_overlapping_absences("2026-03-02", "2026-03-02", user_owner, group_id=group_a)
         self.assertTrue(any(r[1] == user_a for r in group_a_rows))
         self.assertFalse(any(r[1] == user_b for r in group_a_rows))
+
+    def test_superadmin_notification_prefs(self):
+        super_id = 9001
+        db_repo.upsert_user_registration(super_id, "sa9001", "Super 9001")
+        db_repo.approve_user(super_id)
+        db_repo.promote_to_admin(super_id)
+
+        self.assertEqual(db_repo.get_superadmin_notification_mode(super_id), "global")
+        self.assertIsNone(db_repo.get_superadmin_group_notification_ids(super_id))
+
+        self.assertTrue(db_repo.set_superadmin_notification_mode(super_id, "selected_groups"))
+        db_repo.set_superadmin_notification_groups(super_id, [2, 1, 2])
+        self.assertEqual(db_repo.get_superadmin_notification_groups(super_id), [1, 2])
+        self.assertEqual(db_repo.get_superadmin_group_notification_ids(super_id), [1, 2])
+
+        self.assertTrue(db_repo.set_superadmin_notification_mode(super_id, "group_only"))
+        db_repo.create_group("Notif 1", created_by=1)
+        gid, _ = db_repo.list_all_groups()[0]
+        db_repo.add_group_membership(super_id, gid, "viewer", created_by=1)
+        self.assertEqual(db_repo.get_superadmin_group_notification_ids(super_id), [gid])
+
+        db_repo.set_superadmin_notification_scope(super_id, gid)
+        self.assertEqual(db_repo.get_superadmin_notification_mode(super_id), "selected_groups")
+        self.assertEqual(db_repo.get_superadmin_group_notification_ids(super_id), [gid])
+
+        db_repo.set_superadmin_notification_scope(super_id, None)
+        self.assertEqual(db_repo.get_superadmin_notification_mode(super_id), "global")
+        self.assertIsNone(db_repo.get_superadmin_group_notification_ids(super_id))
+
+    def test_admin_notification_recipients_respect_superadmin_scope(self):
+        db_repo.create_group("Dept A", created_by=1)
+        db_repo.create_group("Dept B", created_by=1)
+        groups = db_repo.list_all_groups()
+        group_a = groups[0][0]
+        group_b = groups[1][0]
+
+        super_global = 9101
+        super_scoped = 9102
+        group_admin_b = 9103
+
+        db_repo.upsert_user_registration(super_global, "sa9101", "Super Global")
+        db_repo.upsert_user_registration(super_scoped, "sa9102", "Super Scoped")
+        db_repo.upsert_user_registration(group_admin_b, "ga9103", "Group Admin B")
+        db_repo.approve_user(super_global)
+        db_repo.approve_user(super_scoped)
+        db_repo.approve_user(group_admin_b)
+        db_repo.promote_to_admin(super_global)
+        db_repo.promote_to_admin(super_scoped)
+        db_repo.add_group_membership(super_scoped, group_b, "admin", created_by=1)
+        db_repo.add_group_membership(group_admin_b, group_b, "admin", created_by=1)
+
+        db_repo.set_superadmin_notification_scope(super_scoped, group_a)
+
+        recipients_a = db_repo.get_admin_notification_recipients([group_a])
+        self.assertIn(super_global, recipients_a)
+        self.assertIn(super_scoped, recipients_a)
+        self.assertNotIn(group_admin_b, recipients_a)
+
+        recipients_b = db_repo.get_admin_notification_recipients([group_b])
+        self.assertIn(super_global, recipients_b)
+        self.assertNotIn(super_scoped, recipients_b)
+        self.assertIn(group_admin_b, recipients_b)
 
 
 if __name__ == "__main__":
