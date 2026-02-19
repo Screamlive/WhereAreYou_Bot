@@ -101,6 +101,23 @@ def init_db():
         )
     ''')
 
+    # NEW: Запросы на роль в группе (например, role='viewer')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS group_role_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            group_id INTEGER NOT NULL,
+            target_role TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT,
+            reviewed_at TEXT,
+            requested_by INTEGER,
+            reviewed_by INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(telegram_id),
+            FOREIGN KEY(group_id) REFERENCES groups(id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 

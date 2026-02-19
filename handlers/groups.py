@@ -13,9 +13,9 @@ from aiogram.types import (
 
 from core import (
     is_superadmin,
-    user_is_group_admin_any,
+    get_group_scope,
     get_admin_scope,
-    get_admin_groups,
+    get_view_groups,
     get_role_menu,
 )
 from db_repo import (
@@ -35,11 +35,17 @@ from db_repo import (
     update_group_membership_role,
     add_group_membership,
     list_group_admin_users,
+    list_group_viewer_users,
     remove_user_from_group,
     list_pending_group_requests,
     get_group_request,
     set_group_request_status,
     create_group_request,
+    has_pending_group_role_request,
+    create_group_role_request,
+    list_pending_group_role_requests,
+    get_group_role_request,
+    set_group_role_request_status,
     get_approved_users,
     get_all_users,
     get_user_fullname,
@@ -64,7 +70,6 @@ from texts import (
     TEXT_USER_NOT_IN_GROUP,
     TEXT_REQUEST_NOT_FOUND,
     TEXT_INVALID_REQUEST,
-    TEXT_WORK_GROUP_RESET_GLOBAL,
     TEXT_CANCEL_BUTTON,
     TEXT_GROUP_NO_USERS,
     TEXT_REQUEST_ALREADY_PENDING,
@@ -155,6 +160,14 @@ def _build_group_add_users_picker(
     ])
 
     return text, InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+
+def _group_role_label(role: str) -> str:
+    if role == "admin":
+        return "админ"
+    if role == "viewer":
+        return "наблюдатель"
+    return "участник"
 
 
 ###############################################################################
@@ -294,8 +307,8 @@ async def delete_group_cancel(cb: CallbackQuery):
 @router.message(lambda msg: msg.text in {"Список администраторов группы", "Список админов группы"})
 async def list_group_admins_cmd(message: types.Message):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, _can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -366,7 +379,7 @@ async def superadmin_list_group_users_pick(cb: CallbackQuery):
     lines = [f"Пользователи группы «{group_name}»:"] 
     for uid, fullname, username, role in rows:
         uname = f" (@{username})" if username else ""
-        role_label = "админ" if role == "admin" else "участник"
+        role_label = _group_role_label(role)
         lines.append(f"- {fullname}{uname} [{role_label}] (ID={uid})")
     await cb.message.answer("\n".join(lines))
     await cb.answer()
@@ -588,6 +601,290 @@ async def revoke_group_admin_pick_user(cb: CallbackQuery, state: FSMContext):
         )
     except Exception:
         pass
+    await cb.answer()
+    await state.clear()
+
+
+class GroupViewerAssignFSM(StatesGroup):
+    waiting_for_group = State()
+    waiting_for_user = State()
+
+
+class GroupViewerRevokeFSM(StatesGroup):
+    waiting_for_group = State()
+    waiting_for_user = State()
+
+
+async def _send_viewer_candidates(cb: CallbackQuery, state: FSMContext, group_id: int) -> None:
+    members = get_group_members(group_id)
+    if not members:
+        await cb.message.answer(TEXT_GROUP_NO_USERS)
+        await state.clear()
+        return
+
+    await state.update_data(group_id=group_id)
+    kb_rows = []
+    for uid, fullname, username, role in members:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        label += f" [{_group_role_label(role)}]"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gva_user:{uid}")])
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await cb.message.answer("Выберите пользователя для назначения роли наблюдателя:", reply_markup=inline_kb)
+    await state.set_state(GroupViewerAssignFSM.waiting_for_user)
+
+
+@router.message(lambda msg: msg.text == "Назначить наблюдателя")
+async def assign_group_viewer_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if is_superadmin(user_id):
+        groups = list_all_groups()
+        if not groups:
+            await message.answer(TEXT_GROUPS_NOT_FOUND)
+            return
+        await state.clear()
+        kb_rows = []
+        for gid, name in groups:
+            kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"gva_group:{gid}")])
+        await message.answer(
+            "Выберите группу для назначения роли наблюдателя:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        )
+        await state.set_state(GroupViewerAssignFSM.waiting_for_group)
+        return
+
+    allowed, group_id, need_select = get_admin_scope(user_id)
+    if not allowed:
+        if need_select:
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
+        else:
+            await message.answer(TEXT_NO_RIGHTS)
+        return
+    if not group_id:
+        await message.answer(TEXT_SELECT_GROUP_FIRST)
+        return
+
+    members = get_group_members(group_id)
+    if not members:
+        await message.answer(TEXT_GROUP_NO_USERS)
+        return
+
+    await state.clear()
+    await state.update_data(group_id=group_id)
+    kb_rows = []
+    for uid, fullname, username, role in members:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        label += f" [{_group_role_label(role)}]"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gva_user:{uid}")])
+    await message.answer(
+        "Выберите пользователя для назначения роли наблюдателя:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    )
+    await state.set_state(GroupViewerAssignFSM.waiting_for_user)
+
+
+@router.callback_query(lambda c: c.data.startswith("gva_group:"), GroupViewerAssignFSM.waiting_for_group)
+async def assign_group_viewer_pick_group(cb: CallbackQuery, state: FSMContext):
+    if not is_superadmin(cb.from_user.id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
+        return
+
+    await _send_viewer_candidates(cb, state, group_id)
+    await cb.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("gva_user:"), GroupViewerAssignFSM.waiting_for_user)
+async def assign_group_viewer_pick_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+    if not group_id:
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
+        await state.clear()
+        return
+
+    reviewer_id = cb.from_user.id
+    if not is_superadmin(reviewer_id) and not is_group_admin(reviewer_id, group_id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
+        return
+
+    role = get_group_membership_role(user_id, group_id)
+    if role == "admin":
+        msg = "Пользователь уже администратор группы."
+    elif role == "viewer":
+        msg = "Пользователь уже наблюдатель группы."
+    elif role == "member":
+        update_group_membership_role(user_id, group_id, "viewer")
+        msg = "Роль пользователя обновлена на наблюдателя."
+    else:
+        add_group_membership(user_id, group_id, "viewer", reviewer_id)
+        msg = "Пользователь добавлен как наблюдатель."
+
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    await cb.message.answer(msg, reply_markup=get_role_menu(reviewer_id))
+    if bot:
+        try:
+            await bot.send_message(
+                user_id,
+                f"Вам назначена роль наблюдателя в группе «{group_name}».",
+            )
+            await bot.send_message(
+                user_id,
+                TEXT_MENU_UPDATED,
+                reply_markup=get_role_menu(user_id)
+            )
+        except Exception:
+            pass
+    log_action(reviewer_id, f"assign_group_viewer user={user_id} group={group_id}")
+    await cb.answer()
+    await state.clear()
+
+
+@router.message(lambda msg: msg.text == "Снять наблюдателя")
+async def revoke_group_viewer_start(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if is_superadmin(user_id):
+        groups = list_all_groups()
+        if not groups:
+            await message.answer(TEXT_GROUPS_NOT_FOUND)
+            return
+        await state.clear()
+        kb_rows = []
+        for gid, name in groups:
+            kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"gvr_group:{gid}")])
+        await message.answer(
+            "Выберите группу для отзыва роли наблюдателя:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+        )
+        await state.set_state(GroupViewerRevokeFSM.waiting_for_group)
+        return
+
+    allowed, group_id, need_select = get_admin_scope(user_id)
+    if not allowed:
+        if need_select:
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
+        else:
+            await message.answer(TEXT_NO_RIGHTS)
+        return
+    if not group_id:
+        await message.answer(TEXT_SELECT_GROUP_FIRST)
+        return
+
+    viewers = list_group_viewer_users(group_id)
+    if not viewers:
+        await message.answer("В этой группе нет наблюдателей.")
+        return
+
+    await state.clear()
+    await state.update_data(group_id=group_id)
+    kb_rows = []
+    for uid, fullname, username in viewers:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gvr_user:{uid}")])
+    await message.answer(
+        "Выберите наблюдателя для отзыва роли:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    )
+    await state.set_state(GroupViewerRevokeFSM.waiting_for_user)
+
+
+@router.callback_query(lambda c: c.data.startswith("gvr_group:"), GroupViewerRevokeFSM.waiting_for_group)
+async def revoke_group_viewer_pick_group(cb: CallbackQuery, state: FSMContext):
+    if not is_superadmin(cb.from_user.id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        await state.clear()
+        return
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
+        return
+
+    viewers = list_group_viewer_users(group_id)
+    if not viewers:
+        await cb.message.answer("В этой группе нет наблюдателей.")
+        await cb.answer()
+        await state.clear()
+        return
+
+    await state.update_data(group_id=group_id)
+    kb_rows = []
+    for uid, fullname, username in viewers:
+        label = fullname or f"User {uid}"
+        if username:
+            label += f" (@{username})"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"gvr_user:{uid}")])
+    await cb.message.answer(
+        "Выберите наблюдателя для отзыва роли:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    )
+    await state.set_state(GroupViewerRevokeFSM.waiting_for_user)
+    await cb.answer()
+
+
+@router.callback_query(lambda c: c.data.startswith("gvr_user:"), GroupViewerRevokeFSM.waiting_for_user)
+async def revoke_group_viewer_pick_user(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    group_id = data.get("group_id")
+    if not group_id:
+        await cb.answer(TEXT_GROUP_NOT_SELECTED, show_alert=True)
+        await state.clear()
+        return
+
+    reviewer_id = cb.from_user.id
+    if not is_superadmin(reviewer_id) and not is_group_admin(reviewer_id, group_id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        await state.clear()
+        return
+
+    try:
+        user_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_USER, show_alert=True)
+        return
+
+    role = get_group_membership_role(user_id, group_id)
+    if role != "viewer":
+        await cb.answer("Пользователь не является наблюдателем этой группы.", show_alert=True)
+        await state.clear()
+        return
+
+    update_group_membership_role(user_id, group_id, "member")
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+    await cb.message.answer("Роль наблюдателя отозвана.", reply_markup=get_role_menu(reviewer_id))
+    if bot:
+        try:
+            await bot.send_message(
+                user_id,
+                f"В группе «{group_name}» у вас отозвали роль наблюдателя.",
+            )
+            await bot.send_message(
+                user_id,
+                TEXT_MENU_UPDATED,
+                reply_markup=get_role_menu(user_id)
+            )
+        except Exception:
+            pass
+    log_action(reviewer_id, f"revoke_group_viewer user={user_id} group={group_id}")
     await cb.answer()
     await state.clear()
 
@@ -896,7 +1193,7 @@ async def remove_user_from_group_pick_group(cb: CallbackQuery, state: FSMContext
         label = f"{fullname}"
         if username:
             label += f" (@{username})"
-        role_label = "админ" if role == "admin" else "участник"
+        role_label = _group_role_label(role)
         label += f" [{role_label}]"
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"grm_user:{uid}")])
 
@@ -949,21 +1246,13 @@ async def remove_user_from_group_pick_user(cb: CallbackQuery, state: FSMContext)
 @router.message(lambda msg: msg.text in {"Заявки на вступление", "Заявки на выход"})
 async def show_group_requests(message: types.Message):
     user_id = message.from_user.id
-    if not is_superadmin(user_id) and not user_is_group_admin_any(user_id):
-        await message.answer(TEXT_NO_RIGHTS)
-        return
-
-    group_id = None
-    if not is_superadmin(user_id):
-        group_id = get_last_group_id(user_id)
-        if not group_id:
+    can_read, can_write, group_id, need_select = get_group_scope(user_id)
+    if not can_read:
+        if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
-            return
-        if not is_group_admin(user_id, group_id):
+        else:
             await message.answer(TEXT_NO_RIGHTS)
-            return
-    else:
-        group_id = get_last_group_id(user_id)
+        return
 
     req_type = "join" if "вступление" in message.text else "leave"
 
@@ -985,11 +1274,50 @@ async def show_group_requests(message: types.Message):
             f"Тип: {type_label}\n"
             f"Пользователь: {user_disp} (ID={req_user_id})"
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="Одобрить", callback_data=f"grp_req_approve:{req_id}"),
-            InlineKeyboardButton(text="Отклонить", callback_data=f"grp_req_decline:{req_id}")
-        ]])
-        await message.answer(text, reply_markup=kb)
+        if can_write:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Одобрить", callback_data=f"grp_req_approve:{req_id}"),
+                InlineKeyboardButton(text="Отклонить", callback_data=f"grp_req_decline:{req_id}")
+            ]])
+            await message.answer(text, reply_markup=kb)
+        else:
+            await message.answer(text + "\n(режим наблюдателя: только просмотр)")
+
+
+@router.message(lambda msg: msg.text == "Заявки на роль")
+async def show_group_role_requests(message: types.Message):
+    user_id = message.from_user.id
+    can_read, can_write, group_id, need_select = get_group_scope(user_id)
+    if not can_read:
+        if need_select:
+            await message.answer(TEXT_SELECT_GROUP_FIRST)
+        else:
+            await message.answer(TEXT_NO_RIGHTS)
+        return
+
+    rows = list_pending_group_role_requests("viewer", group_id)
+    if not rows:
+        await message.answer("Нет заявок на роль наблюдателя.")
+        return
+
+    for req_id, req_user_id, fullname, username, gid, gname, _target_role in rows:
+        user_disp = fullname
+        if username:
+            user_disp += f" (@{username})"
+        text = (
+            f"Заявка на роль #{req_id}\n"
+            f"Группа: {gname} (ID={gid})\n"
+            f"Роль: наблюдатель\n"
+            f"Пользователь: {user_disp} (ID={req_user_id})"
+        )
+        if can_write:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="Одобрить", callback_data=f"grp_role_approve:{req_id}"),
+                InlineKeyboardButton(text="Отклонить", callback_data=f"grp_role_decline:{req_id}")
+            ]])
+            await message.answer(text, reply_markup=kb)
+        else:
+            await message.answer(text + "\n(режим наблюдателя: только просмотр)")
 
 
 @router.callback_query(lambda c: c.data.startswith("grp_req_approve:") or c.data.startswith("grp_req_decline:"))
@@ -1062,16 +1390,89 @@ async def handle_group_request(cb: CallbackQuery):
     log_action(user_id, f"group_request declined {req_id}")
 
 
+@router.callback_query(lambda c: c.data.startswith("grp_role_approve:") or c.data.startswith("grp_role_decline:"))
+async def handle_group_role_request(cb: CallbackQuery):
+    reviewer_id = cb.from_user.id
+    action, req_id_str = cb.data.split(":", 1)
+    try:
+        req_id = int(req_id_str)
+    except ValueError:
+        await cb.answer(TEXT_INVALID_REQUEST, show_alert=True)
+        return
+
+    row = get_group_role_request(req_id)
+    if not row:
+        await cb.answer(TEXT_REQUEST_NOT_FOUND, show_alert=True)
+        return
+
+    req_user_id, group_id, target_role, status = row
+    if status != "pending":
+        await cb.answer("Заявка уже обработана.", show_alert=True)
+        return
+
+    if not is_superadmin(reviewer_id) and not is_group_admin(reviewer_id, group_id):
+        await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
+        return
+
+    now = datetime.datetime.now().isoformat()
+    group_name = get_group_name(group_id) or f"ID={group_id}"
+
+    if action == "grp_role_approve":
+        current_role = get_group_membership_role(req_user_id, group_id)
+        if current_role == "admin":
+            result_text = "Пользователь уже администратор группы."
+        elif current_role == "viewer":
+            result_text = "Пользователь уже наблюдатель группы."
+        elif current_role == "member":
+            update_group_membership_role(req_user_id, group_id, "viewer")
+            result_text = "Роль пользователя обновлена: наблюдатель."
+        else:
+            add_group_membership(req_user_id, group_id, "viewer", reviewer_id)
+            result_text = "Пользователь добавлен в группу как наблюдатель."
+
+        set_group_role_request_status(req_id, "approved", now, reviewer_id)
+        await cb.message.answer(f"Заявка на роль #{req_id} одобрена. {result_text}")
+        if bot:
+            try:
+                await bot.send_message(
+                    req_user_id,
+                    f"Ваша заявка на роль наблюдателя в группе «{group_name}» одобрена."
+                )
+                await bot.send_message(
+                    req_user_id,
+                    TEXT_MENU_UPDATED,
+                    reply_markup=get_role_menu(req_user_id)
+                )
+            except Exception:
+                pass
+        log_action(reviewer_id, f"group_role_request approved {req_id}")
+        await cb.answer()
+        return
+
+    set_group_role_request_status(req_id, "declined", now, reviewer_id)
+    await cb.message.answer(f"Заявка на роль #{req_id} отклонена.")
+    if bot:
+        try:
+            await bot.send_message(
+                req_user_id,
+                f"Ваша заявка на роль наблюдателя в группе «{group_name}» отклонена."
+            )
+        except Exception:
+            pass
+    log_action(reviewer_id, f"group_role_request declined {req_id}")
+    await cb.answer()
+
+
 ###############################################################################
 # Сменить рабочую группу (админ/суперадмин)
 ###############################################################################
-@router.message(lambda msg: msg.text == "Сменить группу")
+@router.message(lambda msg: msg.text in {"Сменить группу", "Выбрать группу"})
 async def change_work_group(message: types.Message):
     user_id = message.from_user.id
 
-    admin_groups = get_admin_groups(user_id)
+    view_groups = get_view_groups(user_id)
 
-    if not is_superadmin(user_id) and not admin_groups:
+    if not is_superadmin(user_id) and not view_groups:
         await message.answer(TEXT_NO_RIGHTS)
         return
 
@@ -1079,7 +1480,7 @@ async def change_work_group(message: types.Message):
         groups = list_all_groups()
         allow_global = True
     else:
-        groups = [(gid, name) for (gid, name) in admin_groups]
+        groups = [(gid, name) for (gid, name, _role) in view_groups]
         allow_global = False
 
     if not groups and not allow_global:
@@ -1103,12 +1504,10 @@ async def set_work_group_global(message: types.Message):
         await message.answer(TEXT_NO_RIGHTS)
         return
     set_last_group_id(message.from_user.id, None)
-    await message.answer(TEXT_WORK_GROUP_RESET_GLOBAL, reply_markup=get_role_menu(message.from_user.id))
-
-
-@router.message(lambda msg: msg.text == "Выбрать группу")
-async def select_work_group_alias(message: types.Message):
-    await change_work_group(message)
+    await message.answer(
+        "Режим суперадмина: глобально. Права не изменены, групповой фильтр сброшен.",
+        reply_markup=get_role_menu(message.from_user.id)
+    )
 
 
 @router.callback_query(lambda c: c.data.startswith("set_group:"))
@@ -1121,7 +1520,7 @@ async def set_work_group(cb: CallbackQuery):
             await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
             return
         set_last_group_id(user_id, None)
-        await cb.message.answer(TEXT_WORK_GROUP_RESET_GLOBAL)
+        await cb.message.answer("Режим суперадмина: глобально. Права не изменены, фильтр сброшен.")
         await cb.answer()
         return
 
@@ -1131,7 +1530,7 @@ async def set_work_group(cb: CallbackQuery):
         await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
         return
 
-    if not is_superadmin(user_id) and not is_group_admin(user_id, group_id):
+    if not is_superadmin(user_id) and get_group_membership_role(user_id, group_id) not in {"admin", "viewer"}:
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
@@ -1144,7 +1543,12 @@ async def set_work_group(cb: CallbackQuery):
         await cb.answer("Пользователь не найден.", show_alert=True)
         return
 
-    await cb.message.answer(f"Рабочая группа установлена: {group_name}")
+    if is_superadmin(user_id):
+        await cb.message.answer(
+            f"Режим суперадмина: фильтр по группе «{group_name}». Права не изменены."
+        )
+    else:
+        await cb.message.answer(f"Рабочая группа установлена: {group_name}")
     # Обновим меню после выбора группы
     await cb.message.answer(TEXT_MENU_UPDATED, reply_markup=get_role_menu(user_id))
     await cb.answer()
@@ -1183,7 +1587,7 @@ async def remove_user_prompt(message: types.Message):
 
     kb_rows = []
     for (tid, fname, username, role) in members:
-        role_label = "админ" if role == "admin" else "участник"
+        role_label = _group_role_label(role)
         label = f"{fname}"
         if username:
             label += f" (@{username})"
@@ -1245,10 +1649,85 @@ async def show_my_groups(message: types.Message):
 
     lines = []
     for gid, name, role in groups:
-        role_label = "админ" if role == "admin" else "участник"
+        role_label = _group_role_label(role)
         lines.append(f"- {name} (ID={gid}, роль: {role_label})")
 
     await message.answer("Ваши группы:\n" + "\n".join(lines))
+
+
+@router.message(lambda msg: msg.text == "Запросить роль наблюдателя")
+async def request_viewer_role_start(message: types.Message):
+    user_id = message.from_user.id
+    if not user_exists_in_db(user_id):
+        await message.answer(TEXT_NOT_REGISTERED_SHORT)
+        return
+    if not is_user_approved(user_id):
+        await message.answer(TEXT_NOT_APPROVED_SHORT)
+        return
+
+    member_groups = [(gid, name) for gid, name, role in get_user_groups(user_id) if role == "member"]
+    if not member_groups:
+        await message.answer("Нет групп, где можно запросить роль наблюдателя.")
+        return
+
+    kb_rows = []
+    for gid, name in member_groups:
+        kb_rows.append([InlineKeyboardButton(text=name, callback_data=f"req_viewer:{gid}")])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer("Выберите группу для запроса роли наблюдателя:", reply_markup=inline_kb)
+
+
+@router.callback_query(lambda c: c.data.startswith("req_viewer:"))
+async def request_viewer_role(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    if not is_user_approved(user_id):
+        await cb.answer(TEXT_NOT_APPROVED_SHORT, show_alert=True)
+        return
+
+    try:
+        group_id = int(cb.data.split(":", 1)[1])
+    except ValueError:
+        await cb.answer(TEXT_INVALID_GROUP, show_alert=True)
+        return
+
+    group_name = get_group_name(group_id)
+    if not group_name:
+        await cb.answer(TEXT_GROUP_NOT_FOUND, show_alert=True)
+        return
+
+    role = get_group_membership_role(user_id, group_id)
+    if role != "member":
+        await cb.answer("Запрос роли доступен только участнику группы.", show_alert=True)
+        return
+
+    if has_pending_group_role_request(user_id, group_id, "viewer"):
+        await cb.answer(TEXT_REQUEST_ALREADY_PENDING, show_alert=True)
+        return
+
+    req_id = create_group_role_request(user_id, group_id, "viewer", user_id)
+    await cb.message.answer(
+        f"Заявка #{req_id} на роль наблюдателя для группы «{group_name}» отправлена."
+    )
+    await cb.answer()
+    log_action(user_id, f"group_role_request create #{req_id} viewer group={group_id}")
+
+    recipients = set(get_admins())
+    recipients.update(get_group_admins(group_id))
+    user_display = get_user_fullname(user_id)
+    for admin_id in recipients:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Одобрить", callback_data=f"grp_role_approve:{req_id}"),
+            InlineKeyboardButton(text="Отклонить", callback_data=f"grp_role_decline:{req_id}")
+        ]])
+        text = (
+            f"{user_display} запросил роль наблюдателя.\n"
+            f"Группа: {group_name} (ID={group_id})\n"
+            f"Заявка #{req_id}"
+        )
+        try:
+            await bot.send_message(admin_id, text, reply_markup=kb)
+        except Exception:
+            pass
 
 
 @router.message(lambda msg: msg.text == "Запроситься в группу")

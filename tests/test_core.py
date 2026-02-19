@@ -90,6 +90,18 @@ if HAS_AIOGRAM:
             menu = core.get_role_menu(tg_id)
             self.assertIs(menu, keyboards.user_main_menu)
 
+        def test_role_menu_group_viewer_single(self):
+            tg_id = 8
+            db_repo.upsert_user_registration(tg_id, "viewer", "Viewer")
+            db_repo.approve_user(tg_id)
+            db_repo.create_group("Team V", created_by=1)
+            group_id, _ = db_repo.list_all_groups()[0]
+            db_repo.add_group_membership(tg_id, group_id, "viewer", created_by=1)
+
+            menu = core.get_role_menu(tg_id)
+            self.assertIs(menu, keyboards.group_viewer_main_menu)
+            self.assertEqual(db_repo.get_last_group_id(tg_id), group_id)
+
         def test_get_admin_scope(self):
             tg_id = 6
             db_repo.upsert_user_registration(tg_id, "ga3", "Group Admin 3")
@@ -111,6 +123,20 @@ if HAS_AIOGRAM:
             allowed, gid, need_select = core.get_admin_scope(tg_id2)
             self.assertFalse(allowed)
             self.assertIsNone(gid)
+            self.assertFalse(need_select)
+
+        def test_get_group_scope_viewer(self):
+            tg_id = 9
+            db_repo.upsert_user_registration(tg_id, "viewer2", "Viewer 2")
+            db_repo.approve_user(tg_id)
+            db_repo.create_group("Team Scope", created_by=1)
+            group_id, _ = db_repo.list_all_groups()[0]
+            db_repo.add_group_membership(tg_id, group_id, "viewer", created_by=1)
+
+            can_read, can_write, gid, need_select = core.get_group_scope(tg_id)
+            self.assertTrue(can_read)
+            self.assertFalse(can_write)
+            self.assertEqual(gid, group_id)
             self.assertFalse(need_select)
 
 else:

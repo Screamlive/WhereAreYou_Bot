@@ -14,7 +14,16 @@ from aiogram.types import (
     BufferedInputFile,
 )
 
-from core import get_admin_groups, get_admin_scope, get_role_menu, is_superadmin, user_has_any_group
+from core import (
+    get_admin_groups,
+    get_admin_scope,
+    get_group_scope,
+    get_role_menu,
+    is_superadmin,
+    user_has_any_group,
+    user_is_group_admin_any,
+    user_is_group_viewer_any,
+)
 from db_repo import (
     log_action,
     user_exists_in_db,
@@ -87,26 +96,39 @@ def set_bot(bot_instance: Bot) -> None:
 OVERLAP_ITEMS_LIMIT = 10
 
 
-def _format_overlap_rows(rows: list[tuple]) -> list[str]:
+def _format_overlap_rows(
+    rows: list[tuple],
+    limit: int | None = OVERLAP_ITEMS_LIMIT,
+    add_tail: bool = True,
+) -> list[str]:
+    if limit is None:
+        visible_rows = rows
+    else:
+        visible_rows = rows[:limit]
+
     lines: list[str] = []
-    for row in rows[:OVERLAP_ITEMS_LIMIT]:
+    for row in visible_rows:
         (_abs_id, _uid, category, sd, ed, _comment, status, fullname, username) = row
         name = f"{fullname} (@{username})" if username else fullname
         sd_disp = format_date_display(sd)
         ed_disp = format_date_display(ed)
         lines.append(f"{name} — {category} {sd_disp}–{ed_disp} ({status})")
-    remaining = len(rows) - OVERLAP_ITEMS_LIMIT
-    if remaining > 0:
+    remaining = len(rows) - len(visible_rows)
+    if add_tail and remaining > 0:
         lines.append(f"…и ещё {remaining}")
     return lines
 
 
-def _build_group_overlap_sections(group_rows: list[tuple[str, list[tuple]]]) -> str | None:
+def _build_group_overlap_sections(
+    group_rows: list[tuple[str, list[tuple]]],
+    limit: int | None = OVERLAP_ITEMS_LIMIT,
+    add_tail: bool = True,
+) -> str | None:
     sections: list[str] = []
     for group_name, rows in group_rows:
         if not rows:
             continue
-        lines = _format_overlap_rows(rows)
+        lines = _format_overlap_rows(rows, limit=limit, add_tail=add_tail)
         sections.append(f"Группа «{group_name}»:\n" + "\n".join(lines))
     if not sections:
         return None
@@ -117,12 +139,14 @@ def _collect_overlaps_for_user_groups(
     target_user_id: int,
     start_date: str,
     end_date: str,
+    full: bool = False,
 ) -> str | None:
+    limit = None if full else OVERLAP_ITEMS_LIMIT
     group_rows: list[tuple[str, list[tuple]]] = []
     for gid, gname, _role in get_user_groups(target_user_id):
         rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
         group_rows.append((gname, rows))
-    return _build_group_overlap_sections(group_rows)
+    return _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
 
 
 def _collect_overlaps_for_requester(
@@ -130,14 +154,16 @@ def _collect_overlaps_for_requester(
     target_user_id: int,
     start_date: str,
     end_date: str,
+    full: bool = False,
 ) -> str | None:
+    limit = None if full else OVERLAP_ITEMS_LIMIT
     if is_superadmin(requester_id):
         rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
         if not rows:
             return None
-        lines = _format_overlap_rows(rows)
+        lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
         return "Пересечения по всем пользователям:\n" + "\n".join(lines)
-    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date)
+    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date, full=full)
 
 
 def _collect_overlaps_for_admin(
@@ -145,12 +171,14 @@ def _collect_overlaps_for_admin(
     target_user_id: int,
     start_date: str,
     end_date: str,
+    full: bool = False,
 ) -> str | None:
+    limit = None if full else OVERLAP_ITEMS_LIMIT
     if is_superadmin(admin_id):
         rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
         if not rows:
             return None
-        lines = _format_overlap_rows(rows)
+        lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
         return "Пересечения по всем пользователям:\n" + "\n".join(lines)
 
     admin_groups = get_admin_groups(admin_id)
@@ -164,10 +192,62 @@ def _collect_overlaps_for_admin(
             continue
         rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
         group_rows.append((gname, rows))
-    sections = _build_group_overlap_sections(group_rows)
+    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
     if not sections:
         return None
     return "Пересечения по группе:\n\n" + sections
+
+
+async def _send_long_message(chat_id: int, text: str, reply_markup=None) -> None:
+    if not bot:
+        return
+
+    max_len = 3500
+    first_chunk = True
+    remaining = text
+    while remaining:
+        if len(remaining) <= max_len:
+            chunk = remaining
+            remaining = ""
+        else:
+            split_at = remaining.rfind("\n", 0, max_len)
+            if split_at < 200:
+                split_at = max_len
+            chunk = remaining[:split_at]
+            remaining = remaining[split_at:].lstrip("\n")
+
+        await bot.send_message(
+            chat_id,
+            chunk,
+            reply_markup=reply_markup if first_chunk else None
+        )
+        first_chunk = False
+
+
+async def _send_admin_request_with_overlaps(
+    admin_id: int,
+    base_text: str,
+    reply_markup,
+    target_user_id: int,
+    start_date: str,
+    end_date: str,
+) -> None:
+    # 1) Первое сообщение — только сама заявка/изменение.
+    await _send_long_message(admin_id, base_text, reply_markup=reply_markup)
+
+    # 2) Второе сообщение — пересечения (если есть), полным списком.
+    overlaps_full = _collect_overlaps_for_admin(
+        admin_id,
+        target_user_id,
+        start_date,
+        end_date,
+        full=True,
+    )
+    if overlaps_full:
+        await _send_long_message(
+            admin_id,
+            "Пересечения:\n\n" + overlaps_full
+        )
 
 
 ###############################################################################
@@ -323,11 +403,15 @@ async def process_comment(message: types.Message, state: FSMContext):
             f"{cat} {sd_disp}–{ed_disp}\n"
             f"Комментарий: {comment or '—'} (pending)"
         )
-        overlaps_admin = _collect_overlaps_for_admin(admin_id, user_id, sd, ed)
-        if overlaps_admin:
-            text_admin += "\n\n" + overlaps_admin
         try:
-            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+            await _send_admin_request_with_overlaps(
+                admin_id,
+                text_admin,
+                kb,
+                user_id,
+                sd,
+                ed,
+            )
         except Exception:
             pass
 
@@ -379,11 +463,15 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
             f"{cat} {sd_disp}–{ed_disp}\n"
             f"Комментарий: {comment or '—'} (pending)"
         )
-        overlaps_admin = _collect_overlaps_for_admin(admin_id, user_id, sd, ed)
-        if overlaps_admin:
-            text_admin += "\n\n" + overlaps_admin
         try:
-            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+            await _send_admin_request_with_overlaps(
+                admin_id,
+                text_admin,
+                kb,
+                user_id,
+                sd,
+                ed,
+            )
         except Exception:
             pass
 
@@ -633,10 +721,15 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         f"{old_part}{new_part}"
     )
 
+    overlaps_for_user = _collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
+
     await message.answer(
         f"Запрос на изменение заявки #{abs_id} отправлен на одобрение администратору.\n"
         f"(Старое и новое видно админу)."
     )
+    if overlaps_for_user:
+        await message.answer("Обнаружены пересечения с другими пользователями:")
+        await _send_long_message(user_id, overlaps_for_user)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
@@ -647,7 +740,14 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         admin_ids.update(get_group_admins(gid))
     for admin_id in admin_ids:
         try:
-            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+            await _send_admin_request_with_overlaps(
+                admin_id,
+                text_admin,
+                kb,
+                user_id,
+                new_sd,
+                new_ed,
+            )
         except Exception:
             pass
 
@@ -787,8 +887,8 @@ async def confirm_delete_absence(cb: CallbackQuery):
 @router.message(lambda msg: msg.text in {"Заявки на отсутствие", "Заявки на отсутствие (pending)"})
 async def show_absence_requests(message: types.Message):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -821,13 +921,16 @@ async def show_absence_requests(message: types.Message):
             f"Период: {sd_disp}–{ed_disp}\n"
             f"Комментарий: {cmnt or '—'}"
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Одобрить", callback_data=f"approve_abs:{abs_id}"),
-                InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
-            ]
-        ])
-        await message.answer(text_info, reply_markup=kb)
+        if can_write:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="Одобрить", callback_data=f"approve_abs:{abs_id}"),
+                    InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
+                ]
+            ])
+            await message.answer(text_info, reply_markup=kb)
+        else:
+            await message.answer(text_info + "\n(режим наблюдателя: только просмотр)")
 
 
 @router.callback_query(lambda c: c.data.startswith("approve_abs:") or c.data.startswith("decline_abs:"))
@@ -894,8 +997,8 @@ async def callback_absence_approval(cb: CallbackQuery):
 )
 async def select_user_for_absences(message: types.Message):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, _can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -1349,8 +1452,8 @@ class CsvExportFSM(StatesGroup):
 @router.message(lambda msg: msg.text in {"Выгрузить отсутствия (CSV)", "Выгрузить отсутствия в CSV", "Выгрузить в CSV"})
 async def start_csv_export(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, _can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -1470,8 +1573,8 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
 @router.message(lambda msg: msg.text in {"Выгрузить отсутствия за сегодня", "Отсутствия на сегодня"})
 async def show_absences_today(message: types.Message):
     tg_id = message.from_user.id
-    allowed, group_id, need_select = get_admin_scope(tg_id)
-    if not allowed:
+    can_read, _can_write, group_id, need_select = get_group_scope(tg_id)
+    if not can_read:
         if need_select:
             await message.answer(TEXT_SELECT_GROUP_FIRST)
         else:
@@ -1520,6 +1623,13 @@ async def add_absence_for_another_start(message: types.Message, state: FSMContex
         return
     if not is_superadmin(message.from_user.id) and not user_has_any_group(message.from_user.id):
         await message.answer(TEXT_NOT_IN_ANY_GROUP)
+        return
+    if (
+        user_is_group_viewer_any(message.from_user.id)
+        and not user_is_group_admin_any(message.from_user.id)
+        and not is_superadmin(message.from_user.id)
+    ):
+        await message.answer("Роль наблюдателя не позволяет добавлять отсутствие другим пользователям.")
         return
 
     await state.clear()
@@ -1686,11 +1796,15 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
             f"{category} {sd_disp}–{ed_disp}\n"
             f"Комментарий: {comment or '—'} (pending)"
         )
-        overlaps_admin = _collect_overlaps_for_admin(admin_id, target_user_id, sd, ed)
-        if overlaps_admin:
-            text_admin += "\n\n" + overlaps_admin
         try:
-            await bot.send_message(admin_id, text_admin, reply_markup=kb)
+            await _send_admin_request_with_overlaps(
+                admin_id,
+                text_admin,
+                kb,
+                target_user_id,
+                sd,
+                ed,
+            )
         except Exception:
             pass
 

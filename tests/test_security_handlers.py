@@ -190,6 +190,94 @@ if HAS_AIOGRAM:
             self.assertTrue(msg.responses)
             self.assertEqual(msg.responses[0]["text"], TEXT_NOT_APPROVED_SHORT)
 
+        async def test_viewer_can_view_absence_requests_read_only(self):
+            viewer_id = 70
+            member_id = 71
+            db_repo.create_group("View Team", created_by=1)
+            group_id, _ = db_repo.list_all_groups()[0]
+
+            db_repo.upsert_user_registration(viewer_id, "viewer70", "Viewer 70")
+            db_repo.approve_user(viewer_id)
+            db_repo.add_group_membership(viewer_id, group_id, "viewer", created_by=1)
+            db_repo.set_last_group_id(viewer_id, group_id)
+
+            db_repo.upsert_user_registration(member_id, "member71", "Member 71")
+            db_repo.approve_user(member_id)
+            db_repo.add_group_membership(member_id, group_id, "member", created_by=1)
+            db_repo.create_absence(member_id, "vacation", "2026-01-10", "2026-01-11", "", "pending")
+
+            msg = FakeMessage("Заявки на отсутствие", viewer_id)
+            await absences_handlers.show_absence_requests(msg)
+
+            self.assertTrue(msg.responses)
+            self.assertIn("режим наблюдателя", msg.responses[-1]["text"])
+
+        async def test_viewer_cannot_approve_absence(self):
+            viewer_id = 80
+            member_id = 81
+            db_repo.create_group("View Team 2", created_by=1)
+            group_id, _ = db_repo.list_all_groups()[0]
+
+            db_repo.upsert_user_registration(viewer_id, "viewer80", "Viewer 80")
+            db_repo.approve_user(viewer_id)
+            db_repo.add_group_membership(viewer_id, group_id, "viewer", created_by=1)
+            db_repo.set_last_group_id(viewer_id, group_id)
+
+            db_repo.upsert_user_registration(member_id, "member81", "Member 81")
+            db_repo.approve_user(member_id)
+            db_repo.add_group_membership(member_id, group_id, "member", created_by=1)
+            abs_id = db_repo.create_absence(member_id, "vacation", "2026-01-10", "2026-01-11", "", "pending")
+
+            cb = FakeCallbackQuery(viewer_id, f"approve_abs:{abs_id}")
+            await absences_handlers.callback_absence_approval(cb)
+
+            self.assertTrue(cb.answers)
+            self.assertEqual(cb.answers[0]["text"], TEXT_NO_RIGHTS_ALERT)
+            self.assertTrue(cb.answers[0]["show_alert"])
+
+        async def test_edit_request_notification_contains_overlaps_for_admin(self):
+            group_id = None
+            editor_id = 90
+            admin_id = 91
+            other_id = 92
+
+            db_repo.create_group("Overlap Team", created_by=1)
+            group_id, _ = db_repo.list_all_groups()[0]
+
+            db_repo.upsert_user_registration(editor_id, "editor90", "Editor 90")
+            db_repo.upsert_user_registration(admin_id, "admin91", "Admin 91")
+            db_repo.upsert_user_registration(other_id, "other92", "Other 92")
+            db_repo.approve_user(editor_id)
+            db_repo.approve_user(admin_id)
+            db_repo.approve_user(other_id)
+
+            db_repo.add_group_membership(editor_id, group_id, "member", created_by=1)
+            db_repo.add_group_membership(admin_id, group_id, "admin", created_by=1)
+            db_repo.add_group_membership(other_id, group_id, "member", created_by=1)
+
+            abs_id = db_repo.create_absence(
+                editor_id, "vacation", "2026-01-01", "2026-01-01", "", "approved"
+            )
+            db_repo.create_absence(
+                other_id, "sick", "2026-01-11", "2026-01-12", "", "approved"
+            )
+
+            state = self.make_state(editor_id)
+            await state.update_data(
+                abs_id=abs_id,
+                new_cat="vacation",
+                new_start_date="2026-01-10",
+                new_end_date="2026-01-12",
+            )
+            await state.set_state(absences_handlers.EditAbsenceFSM.waiting_for_new_comment)
+
+            msg = FakeMessage("-", editor_id)
+            await absences_handlers.edit_absence_comment(msg, state)
+
+            admin_msgs = [m["text"] for m in self.bot.sent if m["chat_id"] == admin_id]
+            self.assertTrue(admin_msgs)
+            self.assertTrue(any("Пересечения" in text for text in admin_msgs))
+
 else:
 
     class TestSecurityHandlers(unittest.TestCase):

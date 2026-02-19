@@ -163,6 +163,22 @@ def is_group_admin(tg_id: int, group_id: int) -> bool:
     return row is not None
 
 
+def is_group_viewer(tg_id: int, group_id: int) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1
+        FROM group_memberships
+        WHERE user_id=? AND group_id=? AND role='viewer'
+        """,
+        (tg_id, group_id)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
 def get_group_admins(group_id: int) -> list[int]:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
@@ -269,6 +285,7 @@ def delete_group(group_id: int) -> None:
     cur = conn.cursor()
     cur.execute("DELETE FROM group_memberships WHERE group_id=?", (group_id,))
     cur.execute("DELETE FROM group_requests WHERE group_id=?", (group_id,))
+    cur.execute("DELETE FROM group_role_requests WHERE group_id=?", (group_id,))
     cur.execute("UPDATE users SET last_group_id=NULL WHERE last_group_id=?", (group_id,))
     cur.execute("DELETE FROM groups WHERE id=?", (group_id,))
     conn.commit()
@@ -331,6 +348,24 @@ def list_group_admin_users(group_id: int) -> list[tuple[int, str, str]]:
         FROM group_memberships gm
         JOIN users u ON u.telegram_id = gm.user_id
         WHERE gm.group_id=? AND gm.role='admin'
+        ORDER BY u.fullname
+        """,
+        (group_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def list_group_viewer_users(group_id: int) -> list[tuple[int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT u.telegram_id, u.fullname, u.username
+        FROM group_memberships gm
+        JOIN users u ON u.telegram_id = gm.user_id
+        WHERE gm.group_id=? AND gm.role='viewer'
         ORDER BY u.fullname
         """,
         (group_id,)
@@ -441,6 +476,104 @@ def create_group_request(user_id: int, group_id: int, req_type: str, requested_b
     conn.commit()
     conn.close()
     return req_id
+
+
+def has_pending_group_role_request(tg_id: int, group_id: int, target_role: str) -> bool:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT 1
+        FROM group_role_requests
+        WHERE user_id=? AND group_id=? AND target_role=? AND status='pending'
+        """,
+        (tg_id, group_id, target_role)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
+def create_group_role_request(user_id: int, group_id: int, target_role: str, requested_by: int) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO group_role_requests (user_id, group_id, target_role, status, requested_at, requested_by)
+        VALUES (?, ?, ?, 'pending', ?, ?)
+        """,
+        (user_id, group_id, target_role, datetime.datetime.now().isoformat(), requested_by)
+    )
+    req_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return req_id
+
+
+def list_pending_group_role_requests(
+    target_role: str,
+    group_id: int | None = None
+) -> list[tuple[int, int, str, str, int, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    if group_id:
+        cur.execute(
+            """
+            SELECT grr.id, grr.user_id, u.fullname, u.username, g.id, g.name, grr.target_role
+            FROM group_role_requests grr
+            JOIN users u ON u.telegram_id = grr.user_id
+            JOIN groups g ON g.id = grr.group_id
+            WHERE grr.status='pending' AND grr.group_id=? AND grr.target_role=?
+            ORDER BY u.fullname
+            """,
+            (group_id, target_role)
+        )
+    else:
+        cur.execute(
+            """
+            SELECT grr.id, grr.user_id, u.fullname, u.username, g.id, g.name, grr.target_role
+            FROM group_role_requests grr
+            JOIN users u ON u.telegram_id = grr.user_id
+            JOIN groups g ON g.id = grr.group_id
+            WHERE grr.status='pending' AND grr.target_role=?
+            ORDER BY g.name, u.fullname
+            """,
+            (target_role,)
+        )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def get_group_role_request(req_id: int) -> tuple[int, int, str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT user_id, group_id, target_role, status
+        FROM group_role_requests
+        WHERE id=?
+        """,
+        (req_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def set_group_role_request_status(req_id: int, status: str, reviewed_at: str, reviewed_by: int) -> None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE group_role_requests
+        SET status=?, reviewed_at=?, reviewed_by=?
+        WHERE id=?
+        """,
+        (status, reviewed_at, reviewed_by, req_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 def create_absence(
@@ -803,6 +936,7 @@ def delete_user_and_related(tg_id: int) -> None:
     cur = conn.cursor()
     cur.execute("DELETE FROM group_memberships WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM group_requests WHERE user_id=?", (tg_id,))
+    cur.execute("DELETE FROM group_role_requests WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM absences WHERE user_id=?", (tg_id,))
     cur.execute("DELETE FROM edit_requests WHERE user_id=?", (tg_id,))
     cur.execute("UPDATE users SET last_group_id=NULL WHERE telegram_id=?", (tg_id,))

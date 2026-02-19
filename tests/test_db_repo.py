@@ -84,6 +84,35 @@ class TestDbRepo(unittest.TestCase):
         row = db_repo.get_group_request(req_id)
         self.assertEqual(row[3], "approved")
 
+    def test_group_role_requests(self):
+        self.assertTrue(db_repo.create_group("Team Role", created_by=1))
+        group_id, _name = db_repo.list_all_groups()[0]
+        user_id = 3010
+        db_repo.upsert_user_registration(user_id, "u3010", "User 3010")
+        db_repo.approve_user(user_id)
+        db_repo.add_group_membership(user_id, group_id, "member", created_by=1)
+
+        self.assertFalse(db_repo.is_group_viewer(user_id, group_id))
+        self.assertFalse(db_repo.has_pending_group_role_request(user_id, group_id, "viewer"))
+
+        req_id = db_repo.create_group_role_request(user_id, group_id, "viewer", requested_by=user_id)
+        self.assertTrue(db_repo.has_pending_group_role_request(user_id, group_id, "viewer"))
+
+        pending = db_repo.list_pending_group_role_requests("viewer", group_id)
+        self.assertTrue(any(r[0] == req_id for r in pending))
+
+        row = db_repo.get_group_role_request(req_id)
+        self.assertEqual(row, (user_id, group_id, "viewer", "pending"))
+
+        db_repo.set_group_role_request_status(req_id, "approved", "2026-01-01T00:00:00", 1)
+        row = db_repo.get_group_role_request(req_id)
+        self.assertEqual(row[3], "approved")
+
+        self.assertTrue(db_repo.update_group_membership_role(user_id, group_id, "viewer"))
+        self.assertTrue(db_repo.is_group_viewer(user_id, group_id))
+        viewers = db_repo.list_group_viewer_users(group_id)
+        self.assertTrue(any(v[0] == user_id for v in viewers))
+
     def test_absences_and_edits(self):
         tg_id = 4001
         db_repo.upsert_user_registration(tg_id, "u3", "User Three")

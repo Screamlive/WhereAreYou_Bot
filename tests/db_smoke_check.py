@@ -38,6 +38,7 @@ def main() -> int:
         "groups",
         "group_memberships",
         "group_requests",
+        "group_role_requests",
     }
     missing = expected - tables
 
