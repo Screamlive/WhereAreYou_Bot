@@ -4,6 +4,7 @@ const groupLabel = document.getElementById("group-label");
 const yearInput = document.getElementById("year-input");
 const presetSelect = document.getElementById("preset-select");
 const densitySelect = document.getElementById("density-select");
+const conflictThresholdSelect = document.getElementById("conflict-threshold-select");
 const statusFilterInputs = [...document.querySelectorAll("input[name='status-filter']")];
 const categoryFilterInputs = [...document.querySelectorAll("input[name='category-filter']")];
 const searchInput = document.getElementById("search-input");
@@ -12,6 +13,7 @@ const statusLine = document.getElementById("status-line");
 const timelineWrap = document.getElementById("timeline-wrap");
 const timelineBody = document.getElementById("timeline-body");
 const monthsRow = document.getElementById("months-row");
+const exportXlsxBtn = document.getElementById("export-xlsx-btn");
 const todayBtn = document.getElementById("today-btn");
 const reloadBtn = document.getElementById("reload-btn");
 const detailsModal = document.getElementById("details-modal");
@@ -164,6 +166,50 @@ async function apiGet(path, query = {}) {
     throw new Error(formatError(body));
   }
   return JSON.parse(body);
+}
+
+async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
+  const url = new URL(path, window.location.origin);
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  if (state.initData) {
+    url.searchParams.set("init_data", state.initData);
+  }
+
+  const headers = {};
+  if (!state.initData && state.devUserId) {
+    headers["X-Telegram-User-Id"] = state.devUserId;
+  }
+
+  const response = await fetch(url.toString(), { headers });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(formatError(body));
+  }
+
+  const blob = await response.blob();
+  let filename = fallbackFilename;
+  const contentDisposition = response.headers.get("Content-Disposition") || "";
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const simpleMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+  if (utf8Match?.[1]) {
+    filename = decodeURIComponent(utf8Match[1]);
+  } else if (simpleMatch?.[1]) {
+    filename = simpleMatch[1];
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function detectTelegramContext() {
@@ -401,6 +447,84 @@ function ensureAtLeastOneStatusChecked(changedInput) {
   return false;
 }
 
+function selectedConflictThreshold() {
+  const threshold = Number.parseInt(conflictThresholdSelect.value || "0", 10);
+  if (!Number.isFinite(threshold) || threshold < 0) {
+    return 0;
+  }
+  return threshold;
+}
+
+function buildDailyLoadMap(overlaps, startDate, endDate) {
+  const byOffset = new Map();
+  if (Array.isArray(overlaps.daily_load) && overlaps.daily_load.length) {
+    overlaps.daily_load.forEach((dayRow) => {
+      const offset = daysBetween(startDate, dayRow.date);
+      if (offset >= 0) {
+        byOffset.set(offset, dayRow.absent_users);
+      }
+    });
+    return byOffset;
+  }
+
+  const usersPerDay = new Map();
+  overlaps.intervals.forEach((interval) => {
+    const clippedStart = interval.start_date < startDate ? startDate : interval.start_date;
+    const clippedEnd = interval.end_date > endDate ? endDate : interval.end_date;
+    if (daysBetween(clippedStart, clippedEnd) < 0) {
+      return;
+    }
+
+    let cursor = parseIsoLocal(clippedStart);
+    const lastDate = parseIsoLocal(clippedEnd);
+    while (cursor <= lastDate) {
+      const iso = formatLocalIso(cursor);
+      if (!usersPerDay.has(iso)) {
+        usersPerDay.set(iso, new Set());
+      }
+      usersPerDay.get(iso).add(interval.user_id);
+      cursor = addDays(cursor, 1);
+    }
+  });
+
+  usersPerDay.forEach((userIds, dateIso) => {
+    const offset = daysBetween(startDate, dateIso);
+    if (offset >= 0) {
+      byOffset.set(offset, userIds.size);
+    }
+  });
+  return byOffset;
+}
+
+function conflictDaysCount(dailyLoadByOffset, threshold) {
+  if (threshold <= 0) {
+    return 0;
+  }
+  let count = 0;
+  dailyLoadByOffset.forEach((absentUsers) => {
+    if (absentUsers >= threshold) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
+function appendConflictMarkers(track, dailyLoadByOffset, threshold, dayWidth) {
+  if (threshold <= 0) {
+    return;
+  }
+  dailyLoadByOffset.forEach((absentUsers, offset) => {
+    if (absentUsers < threshold) {
+      return;
+    }
+    const marker = document.createElement("div");
+    marker.className = "conflict-marker";
+    marker.style.left = `${offset * dayWidth}px`;
+    marker.style.width = `${Math.max(dayWidth, 1)}px`;
+    track.appendChild(marker);
+  });
+}
+
 function showDetailsPanel(text) {
   detailsContent.textContent = text;
   detailsModal.classList.remove("hidden");
@@ -443,6 +567,9 @@ function renderTimeline(overlaps) {
   const dayWidth = scale.dayWidth;
   applyRuntimeDayWidth(dayWidth);
   const trackWidth = Math.max(daysTotal * dayWidth, 400);
+  const conflictThreshold = selectedConflictThreshold();
+  const dailyLoadByOffset = buildDailyLoadMap(overlaps, startDate, endDate);
+  const conflictCount = conflictDaysCount(dailyLoadByOffset, conflictThreshold);
 
   const intervalsByUser = new Map();
   overlaps.intervals.forEach((interval) => {
@@ -463,9 +590,13 @@ function renderTimeline(overlaps) {
   }
 
   const monthsInner = buildMonthHeader(startDate, endDate, trackWidth, dayWidth, scale.headerMode);
-  statusLine.textContent =
+  let statusText =
     `Пользователей: ${overlaps.meta.total_users}, интервалов: ${overlaps.meta.total_intervals}. ` +
     `Период: ${formatPeriodForStatus(overlaps.period)}`;
+  if (conflictThreshold > 0) {
+    statusText += `. Конфликтных дней (>= ${conflictThreshold}): ${conflictCount}`;
+  }
+  statusLine.textContent = statusText;
 
   const todayOffset = daysBetween(startDate, todayIso());
   const todayInRange = todayOffset >= 0 && todayOffset < daysTotal;
@@ -489,6 +620,7 @@ function renderTimeline(overlaps) {
     track.className = "track";
     track.style.width = `${trackWidth}px`;
     track.style.minWidth = `${trackWidth}px`;
+    appendConflictMarkers(track, dailyLoadByOffset, conflictThreshold, dayWidth);
 
     if (todayInRange) {
       const todayMarker = document.createElement("div");
@@ -583,6 +715,20 @@ async function refreshData() {
   }
 }
 
+async function exportCurrentViewXlsx() {
+  try {
+    statusLine.textContent = "Подготовка XLSX...";
+    await apiDownload("/webapp/v1/export/xlsx", currentScopeQuery(), "overlaps.xlsx");
+    if (state.overlaps) {
+      renderTimeline(state.overlaps);
+    } else {
+      statusLine.textContent = "XLSX выгружен.";
+    }
+  } catch (error) {
+    statusLine.textContent = `Ошибка экспорта: ${error.message}`;
+  }
+}
+
 async function init() {
   detectTelegramContext();
   readDevQueryParams();
@@ -611,8 +757,20 @@ presetSelect.addEventListener("change", async () => {
 });
 densitySelect.addEventListener("change", () => {
   applyDensity();
+  if (state.overlaps) {
+    renderTimeline(state.overlaps);
+    return;
+  }
   refreshData();
 });
+conflictThresholdSelect.addEventListener("change", () => {
+  if (state.overlaps) {
+    renderTimeline(state.overlaps);
+    return;
+  }
+  refreshData();
+});
+exportXlsxBtn.addEventListener("click", exportCurrentViewXlsx);
 todayBtn.addEventListener("click", scrollToToday);
 reloadBtn.addEventListener("click", refreshData);
 detailsCloseBtn.addEventListener("click", hideDetailsPanel);

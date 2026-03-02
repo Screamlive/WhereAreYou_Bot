@@ -2,6 +2,8 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
+from io import BytesIO
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -9,7 +11,14 @@ from aiohttp.test_utils import make_mocked_request
 import config
 import database
 import db_repo
-from webapp_api import create_app, handle_absence, handle_me, handle_overlaps, handle_webapp_index
+from webapp_api import (
+    create_app,
+    handle_absence,
+    handle_export_xlsx,
+    handle_me,
+    handle_overlaps,
+    handle_webapp_index,
+)
 
 
 class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
@@ -43,6 +52,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/webapp/static", paths)
         self.assertIn("/webapp/v1/me", paths)
         self.assertIn("/webapp/v1/overlaps", paths)
+        self.assertIn("/webapp/v1/export/xlsx", paths)
         self.assertIn("/webapp/v1/absence/{absence_id}", paths)
 
     async def test_index_is_file_response(self):
@@ -77,6 +87,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["scope"]["type"], "group")
         self.assertEqual(payload["scope"]["group_id"], self.group_id)
         self.assertGreaterEqual(payload["meta"]["total_intervals"], 1)
+        self.assertIn("daily_load", payload)
 
     async def test_overlaps_with_filters_and_query(self):
         request = make_mocked_request(
@@ -141,6 +152,23 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(web.HTTPBadRequest):
             await handle_absence(request)
+
+    async def test_export_xlsx_returns_workbook(self):
+        request = make_mocked_request(
+            "GET",
+            f"/webapp/v1/export/xlsx?scope_type=group&group_id={self.group_id}&year=2026",
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        response = await handle_export_xlsx(request)
+        self.assertEqual(
+            response.content_type,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment;", response.headers.get("Content-Disposition", ""))
+
+        archive = zipfile.ZipFile(BytesIO(response.body))
+        self.assertIn("xl/workbook.xml", archive.namelist())
+        self.assertIn("xl/worksheets/sheet1.xml", archive.namelist())
 
 
 if __name__ == "__main__":

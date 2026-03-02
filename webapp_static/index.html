@@ -14,6 +14,7 @@
         <p id="subtitle">Загрузка профиля...</p>
       </div>
       <div class="topbar-actions">
+        <button id="export-xlsx-btn" type="button">Экспорт XLSX</button>
         <button id="today-btn" type="button">Сегодня</button>
         <button id="reload-btn" type="button">Обновить</button>
       </div>
@@ -45,6 +46,16 @@
         <select id="density-select">
           <option value="detailed">Подробно</option>
           <option value="compact">Компактно</option>
+        </select>
+      </label>
+      <label>
+        Конфликт от
+        <select id="conflict-threshold-select">
+          <option value="0">Выкл</option>
+          <option value="2" selected>&ge; 2</option>
+          <option value="3">&ge; 3</option>
+          <option value="4">&ge; 4</option>
+          <option value="5">&ge; 5</option>
         </select>
       </label>
     </section>

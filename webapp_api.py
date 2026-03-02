@@ -5,11 +5,13 @@ import os
 import time
 from pathlib import Path
 from urllib.parse import parse_qsl
+from urllib.parse import quote
 
 from aiohttp import web
 
 from config import TOKEN
 from database import init_db
+from webapp_export import build_overlaps_export_filename, build_overlaps_xlsx
 from webapp_readonly import (
     WebAppAccessError,
     get_absence_details_payload,
@@ -97,6 +99,19 @@ def _parse_int_param(raw: str | None, name: str) -> int | None:
     return int(raw)
 
 
+def _parse_overlaps_query(request: web.Request) -> dict:
+    return {
+        "scope_type": request.query.get("scope_type"),
+        "group_id": _parse_int_param(request.query.get("group_id"), "group_id"),
+        "year": _parse_int_param(request.query.get("year"), "year"),
+        "start_date": request.query.get("start_date"),
+        "end_date": request.query.get("end_date"),
+        "statuses": _parse_list_param(request.query.get("statuses")),
+        "categories": _parse_list_param(request.query.get("categories")),
+        "query": request.query.get("q"),
+    }
+
+
 async def handle_me(request: web.Request) -> web.Response:
     try:
         user_id = _extract_user_id(request)
@@ -109,27 +124,33 @@ async def handle_me(request: web.Request) -> web.Response:
 async def handle_overlaps(request: web.Request) -> web.Response:
     try:
         user_id = _extract_user_id(request)
-        scope_type = request.query.get("scope_type")
-        group_id = _parse_int_param(request.query.get("group_id"), "group_id")
-        year = _parse_int_param(request.query.get("year"), "year")
-        start_date = request.query.get("start_date")
-        end_date = request.query.get("end_date")
-        statuses = _parse_list_param(request.query.get("statuses"))
-        categories = _parse_list_param(request.query.get("categories"))
-        query = request.query.get("q")
-
+        overlaps_query = _parse_overlaps_query(request)
         payload = get_overlaps_payload(
             user_id=user_id,
-            scope_type=scope_type,
-            group_id=group_id,
-            year=year,
-            start_date=start_date,
-            end_date=end_date,
-            statuses=statuses,
-            categories=categories,
-            query=query,
+            **overlaps_query,
         )
         return web.json_response(payload)
+    except WebAppAccessError as exc:
+        raise _http_error(exc) from exc
+
+
+async def handle_export_xlsx(request: web.Request) -> web.Response:
+    try:
+        user_id = _extract_user_id(request)
+        overlaps_query = _parse_overlaps_query(request)
+        payload = get_overlaps_payload(
+            user_id=user_id,
+            **overlaps_query,
+        )
+        body = build_overlaps_xlsx(payload)
+        filename = build_overlaps_export_filename(payload)
+        return web.Response(
+            body=body,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            },
+        )
     except WebAppAccessError as exc:
         raise _http_error(exc) from exc
 
@@ -156,6 +177,7 @@ def create_app() -> web.Application:
     app.router.add_static("/webapp/static/", path=str(WEBAPP_STATIC_DIR), show_index=False)
     app.router.add_get("/webapp/v1/me", handle_me)
     app.router.add_get("/webapp/v1/overlaps", handle_overlaps)
+    app.router.add_get("/webapp/v1/export/xlsx", handle_export_xlsx)
     app.router.add_get("/webapp/v1/absence/{absence_id}", handle_absence)
     return app
 

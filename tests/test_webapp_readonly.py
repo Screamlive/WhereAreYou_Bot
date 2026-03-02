@@ -91,6 +91,9 @@ class TestWebAppReadonly(unittest.TestCase):
         payload = get_overlaps_payload(401, scope_type="group", group_id=group_a, year=2026)
         interval_user_ids = {row["user_id"] for row in payload["intervals"]}
         self.assertEqual(interval_user_ids, {401, 402})
+        self.assertGreaterEqual(payload["meta"]["max_absent_users"], 2)
+        day_to_load = {item["date"]: item["absent_users"] for item in payload["daily_load"]}
+        self.assertEqual(day_to_load.get("2026-02-02"), 2)
 
         with self.assertRaises(WebAppAccessError) as ctx:
             get_overlaps_payload(401, scope_type="group", group_id=group_b, year=2026)

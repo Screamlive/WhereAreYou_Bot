@@ -81,6 +81,37 @@ def _resolve_period(
     return start_iso, end_iso, normalized_year, False
 
 
+def _build_daily_load(intervals: list[dict], period_start: str, period_end: str) -> tuple[list[dict], int]:
+    start_limit = datetime.date.fromisoformat(period_start)
+    end_limit = datetime.date.fromisoformat(period_end)
+    one_day = datetime.timedelta(days=1)
+
+    users_per_day: dict[str, set[int]] = {}
+    for interval in intervals:
+        interval_start = datetime.date.fromisoformat(interval["start_date"])
+        interval_end = datetime.date.fromisoformat(interval["end_date"])
+        clipped_start = interval_start if interval_start > start_limit else start_limit
+        clipped_end = interval_end if interval_end < end_limit else end_limit
+        if clipped_end < clipped_start:
+            continue
+
+        cursor = clipped_start
+        while cursor <= clipped_end:
+            day_iso = cursor.isoformat()
+            users_per_day.setdefault(day_iso, set()).add(interval["user_id"])
+            cursor += one_day
+
+    daily_load = [
+        {
+            "date": day_iso,
+            "absent_users": len(user_ids),
+        }
+        for day_iso, user_ids in sorted(users_per_day.items())
+    ]
+    max_absent_users = max((row["absent_users"] for row in daily_load), default=0)
+    return daily_load, max_absent_users
+
+
 def _normalize_filter(
     values: list[str] | None,
     allowed: set[str],
@@ -239,6 +270,7 @@ def get_overlaps_payload(
     scope_payload = {"type": resolved_scope, "group_id": resolved_group_id}
     if resolved_scope == "group" and resolved_group_id is not None:
         scope_payload["group_name"] = get_group_name(resolved_group_id) or f"ID={resolved_group_id}"
+    daily_load, max_absent_users = _build_daily_load(intervals, period_start, period_end)
 
     return {
         "scope": scope_payload,
@@ -255,9 +287,11 @@ def get_overlaps_payload(
         },
         "users": sorted(users_by_id.values(), key=lambda item: item["fullname"]),
         "intervals": intervals,
+        "daily_load": daily_load,
         "meta": {
             "total_users": len(users_by_id),
             "total_intervals": len(intervals),
+            "max_absent_users": max_absent_users,
         },
     }
 
