@@ -773,6 +773,116 @@ def get_absence_by_id(abs_id: int) -> tuple[int, str, str, str, str, str] | None
     return row if row else None
 
 
+def get_absence_with_user(abs_id: int) -> tuple[int, int, str, str, str, str, str, str, str] | None:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT a.id,
+               a.user_id,
+               a.category,
+               a.start_date,
+               a.end_date,
+               a.comment,
+               a.status,
+               u.fullname,
+               u.username
+        FROM absences a
+        JOIN users u ON u.telegram_id = a.user_id
+        WHERE a.id=?
+        """,
+        (abs_id,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row if row else None
+
+
+def get_user_group_ids(tg_id: int) -> list[int]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT group_id
+        FROM group_memberships
+        WHERE user_id=?
+        ORDER BY group_id
+        """,
+        (tg_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def list_absences_for_period(
+    start_date: str,
+    end_date: str,
+    statuses: list[str] | None = None,
+    categories: list[str] | None = None,
+    group_id: int | None = None,
+    only_superadmins: bool = False,
+    search_query: str | None = None,
+) -> list[tuple[int, int, str, str, str, str, str, str, str]]:
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    joins = ["JOIN users u ON u.telegram_id = a.user_id"]
+    filters = [
+        "date(a.start_date) <= date(?)",
+        "date(a.end_date) >= date(?)",
+    ]
+    params: list[object] = [end_date, start_date]
+
+    if group_id is not None:
+        joins.append("JOIN group_memberships gm ON gm.user_id = a.user_id")
+        filters.append("gm.group_id=?")
+        params.append(group_id)
+
+    if only_superadmins:
+        filters.append("u.is_admin=1")
+
+    normalized_statuses = sorted(set(s for s in (statuses or []) if s))
+    if normalized_statuses:
+        placeholders = ", ".join("?" for _ in normalized_statuses)
+        filters.append(f"a.status IN ({placeholders})")
+        params.extend(normalized_statuses)
+
+    normalized_categories = sorted(set(c for c in (categories or []) if c))
+    if normalized_categories:
+        placeholders = ", ".join("?" for _ in normalized_categories)
+        filters.append(f"a.category IN ({placeholders})")
+        params.extend(normalized_categories)
+
+    q = (search_query or "").strip().lower()
+    if q:
+        filters.append(
+            "(lower(u.fullname) LIKE ? OR lower(COALESCE(u.username, '')) LIKE ?)"
+        )
+        pattern = f"%{q}%"
+        params.extend([pattern, pattern])
+
+    sql = f"""
+        SELECT DISTINCT a.id,
+               a.user_id,
+               u.fullname,
+               u.username,
+               a.category,
+               a.start_date,
+               a.end_date,
+               a.comment,
+               a.status
+        FROM absences a
+        {" ".join(joins)}
+        WHERE {" AND ".join(filters)}
+        ORDER BY u.fullname, a.start_date, a.id
+    """
+    cur.execute(sql, tuple(params))
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 def update_absence(abs_id: int, category: str, start_date: str, end_date: str, comment: str) -> None:
     conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
