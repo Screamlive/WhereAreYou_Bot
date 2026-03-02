@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhereAreYou — Пересечения</title>
+  <link rel="stylesheet" href="/webapp/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <h1>Пересечения отсутствий</h1>
+        <p id="subtitle">Загрузка профиля...</p>
+      </div>
+      <button id="reload-btn" type="button">Обновить</button>
+    </header>
+
+    <section class="filters">
+      <label>
+        Scope
+        <select id="scope-select"></select>
+      </label>
+      <label id="group-label">
+        Группа
+        <select id="group-select"></select>
+      </label>
+      <label>
+        Год
+        <input id="year-input" type="number" min="2000" max="2100" step="1">
+      </label>
+    </section>
+
+    <section class="legend">
+      <span class="legend-item">
+        <i class="dot vacation"></i> Отпуск
+      </span>
+      <span class="legend-item">
+        <i class="dot sick"></i> Больничный
+      </span>
+      <span class="legend-item">
+        <i class="dot dayoff"></i> DayOff
+      </span>
+      <span class="legend-item">
+        <i class="dot other"></i> Другое
+      </span>
+    </section>
+
+    <main>
+      <div id="status-line" class="status-line">Загрузка...</div>
+
+      <div id="timeline-wrap" class="timeline-wrap hidden">
+        <div class="timeline-head">
+          <div class="user-col sticky">Сотрудник</div>
+          <div id="months-row" class="months-row"></div>
+        </div>
+        <div id="timeline-body" class="timeline-body"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/webapp/static/app.js"></script>
+</body>
+</html>

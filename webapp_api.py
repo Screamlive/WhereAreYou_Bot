@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import time
+from pathlib import Path
 from urllib.parse import parse_qsl
 
 from aiohttp import web
@@ -15,6 +16,8 @@ from webapp_readonly import (
     get_overlaps_payload,
     get_webapp_profile,
 )
+
+WEBAPP_STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
 
 
 def _status_from_error(exc: WebAppAccessError) -> int:
@@ -139,8 +142,14 @@ async def handle_absence(request: web.Request) -> web.Response:
         raise _http_error(exc) from exc
 
 
+async def handle_webapp_index(_request: web.Request) -> web.FileResponse:
+    return web.FileResponse(WEBAPP_STATIC_DIR / "index.html")
+
+
 def create_app() -> web.Application:
     app = web.Application()
+    app.router.add_get("/webapp", handle_webapp_index)
+    app.router.add_static("/webapp/static/", path=str(WEBAPP_STATIC_DIR), show_index=False)
     app.router.add_get("/webapp/v1/me", handle_me)
     app.router.add_get("/webapp/v1/overlaps", handle_overlaps)
     app.router.add_get("/webapp/v1/absence/{absence_id}", handle_absence)
