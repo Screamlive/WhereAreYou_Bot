@@ -112,6 +112,8 @@ async def handle_overlaps(request: web.Request) -> web.Response:
         scope_type = request.query.get("scope_type")
         group_id = _parse_int_param(request.query.get("group_id"), "group_id")
         year = _parse_int_param(request.query.get("year"), "year")
+        start_date = request.query.get("start_date")
+        end_date = request.query.get("end_date")
         statuses = _parse_list_param(request.query.get("statuses"))
         categories = _parse_list_param(request.query.get("categories"))
         query = request.query.get("q")
@@ -121,6 +123,8 @@ async def handle_overlaps(request: web.Request) -> web.Response:
             scope_type=scope_type,
             group_id=group_id,
             year=year,
+            start_date=start_date,
+            end_date=end_date,
             statuses=statuses,
             categories=categories,
             query=query,

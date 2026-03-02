@@ -195,6 +195,43 @@ class TestWebAppReadonly(unittest.TestCase):
         user_ids_upper = {row["user_id"] for row in payload_upper["intervals"]}
         self.assertEqual(user_ids_upper, {901})
 
+    def test_custom_period_filters_interval_range(self):
+        self._create_user(1001, "Range User", "range")
+        db_repo.create_group("Range Team", created_by=1)
+        group_id = db_repo.list_all_groups()[0][0]
+        db_repo.add_group_membership(1001, group_id, "member", created_by=1)
+        db_repo.create_absence(1001, "vacation", "2026-01-01", "2026-01-05", "", "approved")
+        db_repo.create_absence(1001, "vacation", "2026-03-01", "2026-03-03", "", "approved")
+
+        payload = get_overlaps_payload(
+            1001,
+            scope_type="group",
+            group_id=group_id,
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+        )
+        self.assertEqual(payload["period"]["start_date"], "2026-01-01")
+        self.assertEqual(payload["period"]["end_date"], "2026-01-31")
+        self.assertTrue(payload["period"]["is_custom"])
+        interval_ids = {row["absence_id"] for row in payload["intervals"]}
+        self.assertEqual(len(interval_ids), 1)
+
+    def test_custom_period_validates_bounds(self):
+        self._create_user(1101, "Bounds User", "bounds")
+        db_repo.create_group("Bounds Team", created_by=1)
+        group_id = db_repo.list_all_groups()[0][0]
+        db_repo.add_group_membership(1101, group_id, "member", created_by=1)
+
+        with self.assertRaises(WebAppAccessError) as ctx:
+            get_overlaps_payload(
+                1101,
+                scope_type="group",
+                group_id=group_id,
+                start_date="2026-03-01",
+                end_date="2026-01-01",
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

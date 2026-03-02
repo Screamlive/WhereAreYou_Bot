@@ -93,6 +93,33 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["filters"]["categories"], ["vacation"])
         self.assertEqual(payload["filters"]["query"], "User")
 
+    async def test_overlaps_with_custom_period(self):
+        request = make_mocked_request(
+            "GET",
+            (
+                f"/webapp/v1/overlaps?scope_type=group&group_id={self.group_id}"
+                "&start_date=2026-01-01&end_date=2026-01-31"
+            ),
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        response = await handle_overlaps(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["period"]["start_date"], "2026-01-01")
+        self.assertEqual(payload["period"]["end_date"], "2026-01-31")
+        self.assertTrue(payload["period"]["is_custom"])
+
+    async def test_overlaps_rejects_broken_period(self):
+        request = make_mocked_request(
+            "GET",
+            (
+                f"/webapp/v1/overlaps?scope_type=group&group_id={self.group_id}"
+                "&start_date=2026-02-10&end_date=2026-01-01"
+            ),
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        with self.assertRaises(web.HTTPBadRequest):
+            await handle_overlaps(request)
+
     async def test_absence_details_by_id(self):
         request = make_mocked_request(
             "GET",

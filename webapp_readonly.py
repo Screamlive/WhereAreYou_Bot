@@ -47,6 +47,40 @@ def _year_bounds(year: int) -> tuple[str, str]:
     return f"{year}-01-01", f"{year}-12-31"
 
 
+def _parse_iso_date(value: str, field_name: str) -> datetime.date:
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise WebAppAccessError(f"Некорректная дата в {field_name}. Ожидается YYYY-MM-DD.", status_code=400) from exc
+
+
+def _resolve_period(
+    year: int | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[str, str, int | None, bool]:
+    if start_date or end_date:
+        if not start_date or not end_date:
+            raise WebAppAccessError(
+                "Нужно передать и start_date, и end_date для кастомного периода.",
+                status_code=400,
+            )
+        start = _parse_iso_date(start_date, "start_date")
+        end = _parse_iso_date(end_date, "end_date")
+        if start > end:
+            raise WebAppAccessError("start_date не может быть позже end_date.", status_code=400)
+
+        period_year = None
+        if start.year == end.year:
+            if start == datetime.date(start.year, 1, 1) and end == datetime.date(start.year, 12, 31):
+                period_year = start.year
+        return start.isoformat(), end.isoformat(), period_year, True
+
+    normalized_year = _normalize_year(year)
+    start_iso, end_iso = _year_bounds(normalized_year)
+    return start_iso, end_iso, normalized_year, False
+
+
 def _normalize_filter(
     values: list[str] | None,
     allowed: set[str],
@@ -149,13 +183,18 @@ def get_overlaps_payload(
     scope_type: str | None = None,
     group_id: int | None = None,
     year: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
     statuses: list[str] | None = None,
     categories: list[str] | None = None,
     query: str | None = None,
 ) -> dict:
     resolved_scope, resolved_group_id = resolve_webapp_scope(user_id, scope_type, group_id)
-    normalized_year = _normalize_year(year)
-    start_date, end_date = _year_bounds(normalized_year)
+    period_start, period_end, normalized_year, is_custom_period = _resolve_period(
+        year=year,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     normalized_statuses = _normalize_filter(
         statuses,
@@ -165,8 +204,8 @@ def get_overlaps_payload(
     normalized_categories = _normalize_filter(categories, VALID_ABSENCE_CATEGORIES, default=[])
 
     rows = list_absences_for_period(
-        start_date=start_date,
-        end_date=end_date,
+        start_date=period_start,
+        end_date=period_end,
         statuses=normalized_statuses,
         categories=normalized_categories,
         group_id=resolved_group_id if resolved_scope == "group" else None,
@@ -205,8 +244,9 @@ def get_overlaps_payload(
         "scope": scope_payload,
         "period": {
             "year": normalized_year,
-            "start_date": start_date,
-            "end_date": end_date,
+            "start_date": period_start,
+            "end_date": period_end,
+            "is_custom": is_custom_period,
         },
         "filters": {
             "statuses": normalized_statuses,

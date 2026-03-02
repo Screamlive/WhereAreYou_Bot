@@ -13,7 +13,10 @@
         <h1>Пересечения отсутствий</h1>
         <p id="subtitle">Загрузка профиля...</p>
       </div>
-      <button id="reload-btn" type="button">Обновить</button>
+      <div class="topbar-actions">
+        <button id="today-btn" type="button">Сегодня</button>
+        <button id="reload-btn" type="button">Обновить</button>
+      </div>
     </header>
 
     <section class="filters">
@@ -29,21 +32,21 @@
         Год
         <input id="year-input" type="number" min="2000" max="2100" step="1">
       </label>
-    </section>
-
-    <section class="legend">
-      <span class="legend-item">
-        <i class="dot vacation"></i> Отпуск
-      </span>
-      <span class="legend-item">
-        <i class="dot sick"></i> Больничный
-      </span>
-      <span class="legend-item">
-        <i class="dot dayoff"></i> DayOff
-      </span>
-      <span class="legend-item">
-        <i class="dot other"></i> Другое
-      </span>
+      <label>
+        Период
+        <select id="preset-select">
+          <option value="current_year">Текущий год</option>
+          <option value="current_month">Текущий месяц</option>
+          <option value="next_90_days">Следующие 90 дней</option>
+        </select>
+      </label>
+      <label>
+        Плотность
+        <select id="density-select">
+          <option value="detailed">Подробно</option>
+          <option value="compact">Компактно</option>
+        </select>
+      </label>
     </section>
 
     <section class="filters-extended">

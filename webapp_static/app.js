@@ -2,6 +2,8 @@ const scopeSelect = document.getElementById("scope-select");
 const groupSelect = document.getElementById("group-select");
 const groupLabel = document.getElementById("group-label");
 const yearInput = document.getElementById("year-input");
+const presetSelect = document.getElementById("preset-select");
+const densitySelect = document.getElementById("density-select");
 const statusFilterInputs = [...document.querySelectorAll("input[name='status-filter']")];
 const categoryFilterInputs = [...document.querySelectorAll("input[name='category-filter']")];
 const searchInput = document.getElementById("search-input");
@@ -10,6 +12,7 @@ const statusLine = document.getElementById("status-line");
 const timelineWrap = document.getElementById("timeline-wrap");
 const timelineBody = document.getElementById("timeline-body");
 const monthsRow = document.getElementById("months-row");
+const todayBtn = document.getElementById("today-btn");
 const reloadBtn = document.getElementById("reload-btn");
 const detailsModal = document.getElementById("details-modal");
 const detailsBackdrop = document.getElementById("details-backdrop");
@@ -49,11 +52,82 @@ const STATUS_LABELS = {
 };
 
 let searchDebounceTimer = null;
+let resizeDebounceTimer = null;
 
-function getDayWidth() {
-  const css = getComputedStyle(document.documentElement).getPropertyValue("--day-w").trim();
+function formatLocalIso(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function parseIsoLocal(value) {
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function utcDayIndex(date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / (24 * 60 * 60 * 1000));
+}
+
+function daysBetweenDates(start, end) {
+  return utcDayIndex(end) - utcDayIndex(start);
+}
+
+function todayIso() {
+  return formatLocalIso(new Date());
+}
+
+function getUserColumnWidth() {
+  const css = getComputedStyle(document.documentElement).getPropertyValue("--user-col-w").trim();
   const value = parseFloat(css.replace("px", ""));
-  return Number.isFinite(value) && value > 0 ? value : 3;
+  return Number.isFinite(value) && value > 0 ? value : 260;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resolveScale(totalDays, availableTrackWidth = 0) {
+  const isCompact = densitySelect.value === "compact";
+  const fitted = availableTrackWidth > 0 ? availableTrackWidth / totalDays : 0;
+
+  if (totalDays <= 45) {
+    const base = isCompact ? 20 : 28;
+    const min = isCompact ? 14 : 20;
+    const max = isCompact ? 64 : 80;
+    return {
+      headerMode: "day",
+      dayWidth: clamp(Math.max(base, fitted || base), min, max),
+    };
+  }
+  if (totalDays <= 120) {
+    const base = isCompact ? 7 : 10;
+    const min = isCompact ? 5 : 7;
+    const max = isCompact ? 20 : 28;
+    return {
+      headerMode: "week",
+      dayWidth: clamp(Math.max(base, fitted || base), min, max),
+    };
+  }
+
+  const base = isCompact ? 3 : 4;
+  const min = isCompact ? 2.2 : 2.8;
+  const max = isCompact ? 6 : 8;
+  return {
+    headerMode: "month",
+    dayWidth: clamp(Math.max(base, fitted || base), min, max),
+  };
+}
+
+function applyRuntimeDayWidth(dayWidth) {
+  document.documentElement.style.setProperty("--day-w", `${dayWidth}px`);
 }
 
 function formatError(text) {
@@ -164,6 +238,10 @@ function renderProfile(profile) {
 
   const currentYear = new Date().getFullYear();
   yearInput.value = String(currentYear);
+  presetSelect.value = "current_year";
+  densitySelect.value = window.matchMedia("(max-width: 900px)").matches ? "compact" : "detailed";
+  applyDensity();
+  applyPresetState();
   toggleGroupFilter();
 }
 
@@ -172,36 +250,91 @@ function toggleGroupFilter() {
   groupLabel.style.display = isGroupScope ? "flex" : "none";
 }
 
-function monthSegments(year, dayWidth) {
-  const segments = [];
-  for (let month = 0; month < 12; month += 1) {
-    const start = new Date(year, month, 1);
-    const end = new Date(year, month + 1, 0);
-    const days = end.getDate();
-    segments.push({
-      key: `${year}-${month + 1}`,
-      label: monthFormatter.format(start),
-      width: days * dayWidth,
-    });
-  }
-  return segments;
+function monthBounds(date) {
+  return {
+    start: new Date(date.getFullYear(), date.getMonth(), 1),
+    end: new Date(date.getFullYear(), date.getMonth() + 1, 0),
+  };
 }
 
-function buildMonthHeader(periodStart, periodEnd, totalWidth, dayWidth) {
+function weekStartMonday(date) {
+  const start = new Date(date);
+  const offset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - offset);
+  return new Date(start.getFullYear(), start.getMonth(), start.getDate());
+}
+
+function shortDayNumber(date) {
+  return String(date.getDate()).padStart(2, "0");
+}
+
+function shortDayLabel(date) {
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  return `${dd}.${mm}`;
+}
+
+function buildHeaderBlocks(periodStart, periodEnd, dayWidth, headerMode) {
+  const start = parseIsoLocal(periodStart);
+  const end = parseIsoLocal(periodEnd);
+  const blocks = [];
+
+  if (headerMode === "day") {
+    let cursor = new Date(start);
+    while (cursor <= end) {
+      blocks.push({
+        label: shortDayNumber(cursor),
+        width: dayWidth,
+        kind: "day",
+      });
+      cursor = addDays(cursor, 1);
+    }
+    return blocks;
+  }
+
+  if (headerMode === "week") {
+    let cursor = weekStartMonday(start);
+    while (cursor <= end) {
+      const weekEnd = addDays(cursor, 6);
+      const segmentStart = cursor < start ? start : cursor;
+      const segmentEnd = weekEnd > end ? end : weekEnd;
+      const width = (daysBetweenDates(segmentStart, segmentEnd) + 1) * dayWidth;
+      blocks.push({
+        label: shortDayLabel(segmentStart),
+        width,
+        kind: "week",
+      });
+      cursor = addDays(cursor, 7);
+    }
+    return blocks;
+  }
+
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor <= end) {
+    const bounds = monthBounds(cursor);
+    const segmentStart = bounds.start < start ? start : bounds.start;
+    const segmentEnd = bounds.end > end ? end : bounds.end;
+    const width = (daysBetweenDates(segmentStart, segmentEnd) + 1) * dayWidth;
+    blocks.push({
+      label: monthFormatter.format(segmentStart),
+      width,
+      kind: "month",
+    });
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+  return blocks;
+}
+
+function buildMonthHeader(periodStart, periodEnd, totalWidth, dayWidth, headerMode) {
   monthsRow.innerHTML = "";
   const inner = document.createElement("div");
   inner.className = "months-inner";
   inner.style.width = `${totalWidth}px`;
   monthsRow.appendChild(inner);
 
-  const start = new Date(periodStart);
-  const end = new Date(periodEnd);
-  const year = start.getFullYear();
-  if (year !== end.getFullYear()) return inner;
-
-  monthSegments(year, dayWidth).forEach((segment) => {
+  buildHeaderBlocks(periodStart, periodEnd, dayWidth, headerMode).forEach((segment) => {
     const block = document.createElement("div");
-    block.className = "month-block";
+    block.className = `month-block month-block--${segment.kind}`;
     block.style.width = `${segment.width}px`;
     block.textContent = segment.label;
     inner.appendChild(block);
@@ -211,15 +344,49 @@ function buildMonthHeader(periodStart, periodEnd, totalWidth, dayWidth) {
 }
 
 function daysBetween(startDate, endDate) {
-  const dayMs = 24 * 60 * 60 * 1000;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  return Math.floor((end - start) / dayMs);
+  return daysBetweenDates(parseIsoLocal(startDate), parseIsoLocal(endDate));
 }
 
 function buildTooltip(interval) {
   const comment = interval.comment || "—";
   return `${categoryLabel(interval.category)}\n${formatIsoDate(interval.start_date)} - ${formatIsoDate(interval.end_date)}\n${statusLabel(interval.status)}\nКомментарий: ${comment}`;
+}
+
+function formatPeriodForStatus(period) {
+  if (!period) return "";
+  return `${formatIsoDate(period.start_date)} - ${formatIsoDate(period.end_date)}`;
+}
+
+function presetRange() {
+  const preset = presetSelect.value;
+  const now = new Date();
+  if (preset === "current_month") {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      start: formatLocalIso(start),
+      end: formatLocalIso(end),
+    };
+  }
+  if (preset === "next_90_days") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(start);
+    end.setDate(start.getDate() + 89);
+    return {
+      start: formatLocalIso(start),
+      end: formatLocalIso(end),
+    };
+  }
+  return null;
+}
+
+function applyPresetState() {
+  const preset = presetSelect.value;
+  yearInput.disabled = preset !== "current_year";
+}
+
+function applyDensity() {
+  document.documentElement.setAttribute("data-density", densitySelect.value);
 }
 
 function selectedCheckboxValues(inputs) {
@@ -266,11 +433,15 @@ async function openAbsenceDetails(absenceId) {
 function renderTimeline(overlaps) {
   state.overlaps = overlaps;
   timelineBody.innerHTML = "";
+  timelineWrap.classList.remove("hidden");
 
   const startDate = overlaps.period.start_date;
   const endDate = overlaps.period.end_date;
-  const dayWidth = getDayWidth();
   const daysTotal = daysBetween(startDate, endDate) + 1;
+  const availableTrackWidth = Math.max(0, timelineWrap.clientWidth - getUserColumnWidth() - 2);
+  const scale = resolveScale(daysTotal, availableTrackWidth);
+  const dayWidth = scale.dayWidth;
+  applyRuntimeDayWidth(dayWidth);
   const trackWidth = Math.max(daysTotal * dayWidth, 400);
 
   const intervalsByUser = new Map();
@@ -282,7 +453,6 @@ function renderTimeline(overlaps) {
   });
 
   if (!overlaps.users.length) {
-    timelineWrap.classList.remove("hidden");
     statusLine.textContent = "Нет данных для выбранного фильтра.";
     const empty = document.createElement("div");
     empty.className = "empty";
@@ -292,12 +462,12 @@ function renderTimeline(overlaps) {
     return;
   }
 
-  const monthsInner = buildMonthHeader(startDate, endDate, trackWidth, dayWidth);
-  timelineWrap.classList.remove("hidden");
-  statusLine.textContent = `Пользователей: ${overlaps.meta.total_users}, интервалов: ${overlaps.meta.total_intervals}`;
+  const monthsInner = buildMonthHeader(startDate, endDate, trackWidth, dayWidth, scale.headerMode);
+  statusLine.textContent =
+    `Пользователей: ${overlaps.meta.total_users}, интервалов: ${overlaps.meta.total_intervals}. ` +
+    `Период: ${formatPeriodForStatus(overlaps.period)}`;
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const todayOffset = daysBetween(startDate, todayIso);
+  const todayOffset = daysBetween(startDate, todayIso());
   const todayInRange = todayOffset >= 0 && todayOffset < daysTotal;
 
   overlaps.users.forEach((user) => {
@@ -329,8 +499,14 @@ function renderTimeline(overlaps) {
 
     const intervals = intervalsByUser.get(user.user_id) || [];
     intervals.forEach((interval) => {
-      const offset = Math.max(0, daysBetween(startDate, interval.start_date));
-      const width = (daysBetween(interval.start_date, interval.end_date) + 1) * dayWidth;
+      const clippedStart = interval.start_date < startDate ? startDate : interval.start_date;
+      const clippedEnd = interval.end_date > endDate ? endDate : interval.end_date;
+      if (daysBetween(clippedStart, clippedEnd) < 0) {
+        return;
+      }
+
+      const offset = Math.max(0, daysBetween(startDate, clippedStart));
+      const width = (daysBetween(clippedStart, clippedEnd) + 1) * dayWidth;
       const bar = document.createElement("div");
       bar.className = `bar ${interval.category}`;
       bar.style.left = `${offset * dayWidth}px`;
@@ -365,15 +541,34 @@ function currentScopeQuery() {
   const selectedCategories = selectedCheckboxValues(categoryFilterInputs);
   const query = {
     scope_type: scopeSelect.value,
-    year: yearInput.value || new Date().getFullYear(),
     statuses: selectedStatuses.join(","),
     categories: selectedCategories.join(","),
     q: (searchInput.value || "").trim(),
   };
+  const preset = presetSelect.value;
+  if (preset === "current_year") {
+    query.year = yearInput.value || new Date().getFullYear();
+  } else {
+    const range = presetRange();
+    if (range) {
+      query.start_date = range.start;
+      query.end_date = range.end;
+    }
+  }
   if (scopeSelect.value === "group") {
     query.group_id = groupSelect.value;
   }
   return query;
+}
+
+function scrollToToday() {
+  const marker = timelineBody.querySelector(".today-marker");
+  if (!marker) {
+    statusLine.textContent = "Маркер «Сегодня» вне выбранного периода.";
+    return;
+  }
+  const targetLeft = Math.max(marker.offsetLeft - 80, 0);
+  timelineBody.scrollTo({ left: targetLeft, behavior: "smooth" });
 }
 
 async function refreshData() {
@@ -410,6 +605,15 @@ scopeSelect.addEventListener("change", async () => {
 
 groupSelect.addEventListener("change", refreshData);
 yearInput.addEventListener("change", refreshData);
+presetSelect.addEventListener("change", async () => {
+  applyPresetState();
+  await refreshData();
+});
+densitySelect.addEventListener("change", () => {
+  applyDensity();
+  refreshData();
+});
+todayBtn.addEventListener("click", scrollToToday);
 reloadBtn.addEventListener("click", refreshData);
 detailsCloseBtn.addEventListener("click", hideDetailsPanel);
 detailsBackdrop.addEventListener("click", hideDetailsPanel);
@@ -437,6 +641,16 @@ searchInput.addEventListener("input", () => {
   searchDebounceTimer = setTimeout(() => {
     refreshData();
   }, 250);
+});
+
+window.addEventListener("resize", () => {
+  if (!state.overlaps) return;
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+  }
+  resizeDebounceTimer = setTimeout(() => {
+    renderTimeline(state.overlaps);
+  }, 120);
 });
 
 init();
