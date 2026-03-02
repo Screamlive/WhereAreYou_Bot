@@ -2,12 +2,19 @@ const scopeSelect = document.getElementById("scope-select");
 const groupSelect = document.getElementById("group-select");
 const groupLabel = document.getElementById("group-label");
 const yearInput = document.getElementById("year-input");
+const statusFilterInputs = [...document.querySelectorAll("input[name='status-filter']")];
+const categoryFilterInputs = [...document.querySelectorAll("input[name='category-filter']")];
+const searchInput = document.getElementById("search-input");
 const subtitle = document.getElementById("subtitle");
 const statusLine = document.getElementById("status-line");
 const timelineWrap = document.getElementById("timeline-wrap");
 const timelineBody = document.getElementById("timeline-body");
 const monthsRow = document.getElementById("months-row");
 const reloadBtn = document.getElementById("reload-btn");
+const detailsModal = document.getElementById("details-modal");
+const detailsBackdrop = document.getElementById("details-backdrop");
+const detailsContent = document.getElementById("details-content");
+const detailsCloseBtn = document.getElementById("details-close-btn");
 
 const state = {
   profile: null,
@@ -17,6 +24,31 @@ const state = {
 };
 
 const monthFormatter = new Intl.DateTimeFormat("ru-RU", { month: "short" });
+const ROLE_LABELS = {
+  superadmin: "Суперадмин",
+  group_admin: "Администратор группы",
+  group_viewer: "Наблюдатель группы",
+  user: "Сотрудник",
+};
+const CATEGORY_LABELS = {
+  vacation: "Отпуск",
+  sick: "Больничный",
+  dayoff: "DayOff",
+  other: "Другое",
+};
+const CATEGORY_SHORT_LABELS = {
+  vacation: "Отп",
+  sick: "Бол",
+  dayoff: "DO",
+  other: "Дрг",
+};
+const STATUS_LABELS = {
+  pending: "На согласовании",
+  approved: "Одобрено",
+  declined: "Отклонено",
+};
+
+let searchDebounceTimer = null;
 
 function getDayWidth() {
   const css = getComputedStyle(document.documentElement).getPropertyValue("--day-w").trim();
@@ -80,10 +112,33 @@ function scopeLabel(scopeType) {
   return scopeType;
 }
 
+function roleLabel(role) {
+  return ROLE_LABELS[role] || role;
+}
+
+function categoryLabel(category) {
+  return CATEGORY_LABELS[category] || category;
+}
+
+function categoryShortLabel(category) {
+  return CATEGORY_SHORT_LABELS[category] || category.slice(0, 3);
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status;
+}
+
+function formatIsoDate(value) {
+  if (!value) return "—";
+  const parts = value.split("-");
+  if (parts.length !== 3) return value;
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
 function renderProfile(profile) {
   state.profile = profile;
   const username = profile.user.username ? `@${profile.user.username}` : "без username";
-  subtitle.textContent = `${profile.user.fullname} (${username}), роль: ${profile.role}`;
+  subtitle.textContent = `${profile.user.fullname} (${username}), роль: ${roleLabel(profile.role)}`;
 
   scopeSelect.innerHTML = "";
   profile.scopes.forEach((scopeType) => {
@@ -163,14 +218,49 @@ function daysBetween(startDate, endDate) {
 }
 
 function buildTooltip(interval) {
-  const categoryMap = {
-    vacation: "Отпуск",
-    sick: "Больничный",
-    dayoff: "DayOff",
-    other: "Другое",
-  };
   const comment = interval.comment || "—";
-  return `${categoryMap[interval.category] || interval.category}\n${interval.start_date} - ${interval.end_date}\n${interval.status}\n${comment}`;
+  return `${categoryLabel(interval.category)}\n${formatIsoDate(interval.start_date)} - ${formatIsoDate(interval.end_date)}\n${statusLabel(interval.status)}\nКомментарий: ${comment}`;
+}
+
+function selectedCheckboxValues(inputs) {
+  return inputs.filter((input) => input.checked).map((input) => input.value);
+}
+
+function ensureAtLeastOneStatusChecked(changedInput) {
+  if (selectedCheckboxValues(statusFilterInputs).length > 0) {
+    return true;
+  }
+  changedInput.checked = true;
+  return false;
+}
+
+function showDetailsPanel(text) {
+  detailsContent.textContent = text;
+  detailsModal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+
+function hideDetailsPanel() {
+  detailsModal.classList.add("hidden");
+  document.body.style.overflow = "";
+}
+
+async function openAbsenceDetails(absenceId) {
+  showDetailsPanel("Загрузка деталей отсутствия...");
+  try {
+    const details = await apiGet(`/webapp/v1/absence/${absenceId}`);
+    const username = details.user.username ? `@${details.user.username}` : "—";
+    const message =
+      `Сотрудник: ${details.user.fullname}\n` +
+      `Username: ${username}\n` +
+      `Категория: ${categoryLabel(details.category)}\n` +
+      `Период: ${formatIsoDate(details.start_date)} - ${formatIsoDate(details.end_date)}\n` +
+      `Статус: ${statusLabel(details.status)}\n` +
+      `Комментарий: ${details.comment || "—"}`;
+    showDetailsPanel(message);
+  } catch (error) {
+    showDetailsPanel(`Ошибка: ${error.message}`);
+  }
 }
 
 function renderTimeline(overlaps) {
@@ -246,7 +336,17 @@ function renderTimeline(overlaps) {
       bar.style.left = `${offset * dayWidth}px`;
       bar.style.width = `${Math.max(width, 4)}px`;
       bar.title = buildTooltip(interval);
-      bar.textContent = interval.category;
+      const widthPx = Math.max(width, 4);
+      if (widthPx < 22) {
+        bar.textContent = categoryShortLabel(interval.category).slice(0, 1);
+      } else if (widthPx < 48) {
+        bar.textContent = categoryShortLabel(interval.category);
+      } else {
+        bar.textContent = categoryLabel(interval.category);
+      }
+      bar.addEventListener("click", () => {
+        openAbsenceDetails(interval.absence_id);
+      });
       track.appendChild(bar);
     });
 
@@ -261,9 +361,14 @@ function renderTimeline(overlaps) {
 }
 
 function currentScopeQuery() {
+  const selectedStatuses = selectedCheckboxValues(statusFilterInputs);
+  const selectedCategories = selectedCheckboxValues(categoryFilterInputs);
   const query = {
     scope_type: scopeSelect.value,
     year: yearInput.value || new Date().getFullYear(),
+    statuses: selectedStatuses.join(","),
+    categories: selectedCategories.join(","),
+    q: (searchInput.value || "").trim(),
   };
   if (scopeSelect.value === "group") {
     query.group_id = groupSelect.value;
@@ -273,6 +378,7 @@ function currentScopeQuery() {
 
 async function refreshData() {
   try {
+    hideDetailsPanel();
     statusLine.textContent = "Загрузка данных...";
     const overlaps = await apiGet("/webapp/v1/overlaps", currentScopeQuery());
     renderTimeline(overlaps);
@@ -305,5 +411,32 @@ scopeSelect.addEventListener("change", async () => {
 groupSelect.addEventListener("change", refreshData);
 yearInput.addEventListener("change", refreshData);
 reloadBtn.addEventListener("click", refreshData);
+detailsCloseBtn.addEventListener("click", hideDetailsPanel);
+detailsBackdrop.addEventListener("click", hideDetailsPanel);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !detailsModal.classList.contains("hidden")) {
+    hideDetailsPanel();
+  }
+});
+
+statusFilterInputs.forEach((input) => {
+  input.addEventListener("change", async () => {
+    if (!ensureAtLeastOneStatusChecked(input)) return;
+    await refreshData();
+  });
+});
+
+categoryFilterInputs.forEach((input) => {
+  input.addEventListener("change", refreshData);
+});
+
+searchInput.addEventListener("input", () => {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+  searchDebounceTimer = setTimeout(() => {
+    refreshData();
+  }, 250);
+});
 
 init();

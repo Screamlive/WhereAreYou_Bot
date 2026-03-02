@@ -66,6 +66,10 @@ button {
   cursor: pointer;
 }
 
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 .filters {
   margin-top: 14px;
   display: grid;
@@ -88,6 +92,50 @@ button {
   gap: 8px 14px;
   font-size: 0.88rem;
   color: var(--muted);
+}
+
+.filters-extended {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1.6fr;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.filter-card {
+  background: rgba(20, 32, 52, 0.68);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.filter-title {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.filter-card label {
+  font-size: 0.88rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-box {
+  background: rgba(20, 32, 52, 0.68);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .legend-item {
@@ -229,6 +277,7 @@ button {
   color: #f8fbff;
   white-space: nowrap;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .bar.vacation {
@@ -262,6 +311,50 @@ button {
   color: var(--muted);
 }
 
+.details-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+
+.details-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 11, 19, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.details-card {
+  position: relative;
+  margin: 9vh auto 0;
+  width: min(680px, calc(100vw - 22px));
+  background: rgba(17, 28, 46, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.details-header h2 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.details-content {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: pre-line;
+  line-height: 1.35;
+}
+
 @media (max-width: 860px) {
   :root {
     --user-col-w: 210px;
@@ -269,6 +362,10 @@ button {
   }
 
   .filters {
+    grid-template-columns: 1fr;
+  }
+
+  .filters-extended {
     grid-template-columns: 1fr;
   }
 

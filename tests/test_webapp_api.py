@@ -78,6 +78,21 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["scope"]["group_id"], self.group_id)
         self.assertGreaterEqual(payload["meta"]["total_intervals"], 1)
 
+    async def test_overlaps_with_filters_and_query(self):
+        request = make_mocked_request(
+            "GET",
+            (
+                f"/webapp/v1/overlaps?scope_type=group&group_id={self.group_id}"
+                "&year=2026&statuses=approved,pending&categories=vacation&q=User"
+            ),
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        response = await handle_overlaps(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["filters"]["statuses"], ["approved", "pending"])
+        self.assertEqual(payload["filters"]["categories"], ["vacation"])
+        self.assertEqual(payload["filters"]["query"], "User")
+
     async def test_absence_details_by_id(self):
         request = make_mocked_request(
             "GET",
@@ -89,6 +104,16 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.text)
         self.assertEqual(payload["absence_id"], self.absence_id)
         self.assertEqual(payload["user"]["id"], 9001)
+
+    async def test_absence_details_validates_numeric_id(self):
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/absence/not-number",
+            headers={"X-Telegram-User-Id": "9001"},
+            match_info={"absence_id": "not-number"},
+        )
+        with self.assertRaises(web.HTTPBadRequest):
+            await handle_absence(request)
 
 
 if __name__ == "__main__":

@@ -854,13 +854,7 @@ def list_absences_for_period(
         filters.append(f"a.category IN ({placeholders})")
         params.extend(normalized_categories)
 
-    q = (search_query or "").strip().lower()
-    if q:
-        filters.append(
-            "(lower(u.fullname) LIKE ? OR lower(COALESCE(u.username, '')) LIKE ?)"
-        )
-        pattern = f"%{q}%"
-        params.extend([pattern, pattern])
+    q = (search_query or "").strip()
 
     sql = f"""
         SELECT DISTINCT a.id,
@@ -880,6 +874,21 @@ def list_absences_for_period(
     cur.execute(sql, tuple(params))
     rows = cur.fetchall()
     conn.close()
+
+    if q:
+        q_casefold = q.casefold()
+
+        def _matches_search(row: tuple[int, int, str, str, str, str, str, str, str]) -> bool:
+            fullname = (row[2] or "").casefold()
+            username = (row[3] or "").casefold()
+            return (
+                q_casefold in fullname
+                or q_casefold in username
+                or q_casefold in f"@{username}"
+            )
+
+        rows = [row for row in rows if _matches_search(row)]
+
     return rows
 
 

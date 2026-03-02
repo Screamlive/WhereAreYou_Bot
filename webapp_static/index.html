@@ -46,6 +46,26 @@
       </span>
     </section>
 
+    <section class="filters-extended">
+      <div class="filter-card">
+        <div class="filter-title">Статусы</div>
+        <label><input type="checkbox" name="status-filter" value="approved" checked> Одобрено</label>
+        <label><input type="checkbox" name="status-filter" value="pending" checked> На согласовании</label>
+        <label><input type="checkbox" name="status-filter" value="declined"> Отклонено</label>
+      </div>
+      <div class="filter-card">
+        <div class="filter-title">Категории</div>
+        <label><input type="checkbox" name="category-filter" value="vacation" checked> Отпуск</label>
+        <label><input type="checkbox" name="category-filter" value="sick" checked> Больничный</label>
+        <label><input type="checkbox" name="category-filter" value="dayoff" checked> DayOff</label>
+        <label><input type="checkbox" name="category-filter" value="other" checked> Другое</label>
+      </div>
+      <label class="search-box">
+        Поиск по сотруднику
+        <input id="search-input" type="text" placeholder="ФИО или @username">
+      </label>
+    </section>
+
     <main>
       <div id="status-line" class="status-line">Загрузка...</div>
 
@@ -57,6 +77,19 @@
         <div id="timeline-body" class="timeline-body"></div>
       </div>
     </main>
+
+    <section id="details-modal" class="details-modal hidden" role="dialog" aria-modal="true" aria-labelledby="details-title">
+      <div id="details-backdrop" class="details-backdrop"></div>
+      <div class="details-card">
+        <div class="details-header">
+          <h2 id="details-title">Детали отсутствия</h2>
+          <button id="details-close-btn" type="button">Закрыть</button>
+        </div>
+        <div id="details-content" class="details-content">
+          Нажмите на интервал в таймлайне, чтобы увидеть точные даты и комментарий.
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="/webapp/static/app.js"></script>

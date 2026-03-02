@@ -165,6 +165,36 @@ class TestWebAppReadonly(unittest.TestCase):
             get_overlaps_payload(801, scope_type="group", group_id=group_id, year=2026, statuses=["bad_status"])
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_search_supports_cyrillic_casefold(self):
+        self._create_user(901, "Тестов А.А.", "test_cyr")
+        self._create_user(902, "Test User", "test")
+        db_repo.create_group("Cyrillic Team", created_by=1)
+        group_id = db_repo.list_all_groups()[0][0]
+        db_repo.add_group_membership(901, group_id, "member", created_by=1)
+        db_repo.add_group_membership(902, group_id, "member", created_by=1)
+        db_repo.create_absence(901, "vacation", "2026-06-01", "2026-06-02", "", "approved")
+        db_repo.create_absence(902, "vacation", "2026-06-01", "2026-06-02", "", "approved")
+
+        payload_lower = get_overlaps_payload(
+            901,
+            scope_type="group",
+            group_id=group_id,
+            year=2026,
+            query="тесто",
+        )
+        user_ids_lower = {row["user_id"] for row in payload_lower["intervals"]}
+        self.assertEqual(user_ids_lower, {901})
+
+        payload_upper = get_overlaps_payload(
+            901,
+            scope_type="group",
+            group_id=group_id,
+            year=2026,
+            query="ТЕСТО",
+        )
+        user_ids_upper = {row["user_id"] for row in payload_upper["intervals"]}
+        self.assertEqual(user_ids_upper, {901})
+
 
 if __name__ == "__main__":
     unittest.main()
