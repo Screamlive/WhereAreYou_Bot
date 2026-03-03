@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram WebApp API (read-only)
+After=network.target
+
+[Service]
+User=%i
+Group=%i
+WorkingDirectory=/home/%i/telegram_bot
+ExecStart=/home/%i/telegram_bot/.venv/bin/python /home/%i/telegram_bot/webapp_api.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=WEBAPP_PORT=8080
+Environment=WEBAPP_ALLOW_DEV_FALLBACK=0
+
+[Install]
+WantedBy=multi-user.target

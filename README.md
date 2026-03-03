@@ -64,6 +64,11 @@ pytest
 - кнопка **«Пересечения (WebApp)»** в главном меню бота;
 - кнопка показывается, если задан `WEBAPP_URL` (в `config.py` или через env `WEBAPP_URL`).
 
+Обязательные условия для Telegram WebApp в production:
+- публичный HTTPS домен;
+- домен прописан в BotFather через `/setdomain`;
+- backend не выдает данные без валидного `initData`.
+
 Запуск backend WebApp:
 ```
 source .venv/bin/activate
@@ -80,6 +85,58 @@ curl -H "X-Telegram-User-Id: <telegram_id>" "http://127.0.0.1:8080/webapp/v1/me"
 - для production используется только Telegram `initData` (dev fallback выключен по умолчанию);
 - URL WebApp публичный, но запросы без валидного `initData` получают `401/403`;
 - для Telegram WebApp нужен HTTPS-домен и настройка домена через BotFather (`/setdomain`).
+
+## Nginx и домен (production)
+
+Системные пакеты (Ubuntu):
+```
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+1) Настройка DNS (Cloudflare):
+- `A` запись `bot-test.example.com` -> IP тестового сервера;
+- `A` запись `bot.example.com` -> IP продового сервера.
+
+2) Поднимите backend WebApp:
+```
+source .venv/bin/activate
+WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
+```
+
+3) Пример Nginx-конфига:
+- `deploy/nginx/telegram_webapp.conf.example`
+
+4) Подключите конфиг и перезагрузите Nginx:
+```
+sudo cp deploy/nginx/telegram_webapp.conf.example /etc/nginx/sites-available/telegram_webapp
+sudo ln -s /etc/nginx/sites-available/telegram_webapp /etc/nginx/sites-enabled/telegram_webapp
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5) Выпустите TLS сертификат:
+```
+sudo certbot --nginx -d bot-test.example.com
+```
+
+6) Пропишите URL WebApp для бота:
+```
+# config.py
+WEBAPP_URL = "https://bot-test.example.com/webapp"
+WEBAPP_ALLOW_DEV_FALLBACK = False
+```
+
+7) В BotFather для соответствующего бота:
+```
+/setdomain
+bot-test.example.com
+```
+
+8) Перезапустите бота и WebApp API.
+
+Примечание:
+- `requirements-system.txt` содержит список системных пакетов для деплоя.
 
 Доступный функционал:
 - scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);

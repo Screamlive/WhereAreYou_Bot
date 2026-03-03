@@ -202,6 +202,13 @@ python webapp_api.py
   `WEBAPP_ALLOW_DEV_FALLBACK=1` (локальная разработка);
 - публичный URL WebApp не должен отдавать данные без валидного `initData`.
 
+Инфраструктурные требования:
+- WebApp должен быть доступен по публичному HTTPS URL;
+- рекомендуется проксирование через Nginx (`/webapp`, `/webapp/static/`, `/webapp/v1/`);
+- домен должен быть задан в BotFather через `/setdomain`;
+- тест и production рекомендуется разделять поддоменами
+  (например, `bot-test.example.com` и `bot.example.com`).
+
 ## Сервисная рассылка (CLI)
 
 Скрипт `broadcast.py` используется для сервисных объявлений через бот

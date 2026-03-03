@@ -1,0 +1,4 @@
+# System packages for production deployment (Ubuntu/Debian names)
+nginx
+certbot
+python3-certbot-nginx

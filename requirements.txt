@@ -1,1 +1,4 @@
 aiogram==3.24.0
+aiohttp==3.13.3
+# System dependency for production WebApp entrypoint (install via apt/yum, not pip):
+# nginx

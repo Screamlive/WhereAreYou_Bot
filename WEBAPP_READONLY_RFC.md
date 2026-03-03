@@ -116,6 +116,10 @@
 - Backend:
   - reuse текущей БД SQLite и репозиторного слоя;
   - отдельные read-only endpoints для WebApp.
+- Ingress:
+  - публичный HTTPS домен на Nginx reverse proxy;
+  - проксирование в `webapp_api.py` на локальном порту (например `127.0.0.1:8080`);
+  - разделение тест/прод по разным поддоменам.
 
 ## 7.2 Аутентификация
 
@@ -158,6 +162,7 @@ Production checklist:
 - настроить публичный HTTPS домен;
 - прописать домен в BotFather (`/setdomain`);
 - включить initData-only режим (без dev fallback);
+- настроить Nginx reverse proxy для маршрутов `/webapp`, `/webapp/static/`, `/webapp/v1/`;
 - проверить, что прямой открытый URL без `initData` не раскрывает данные.
 
 ## 8) Риски и ограничения

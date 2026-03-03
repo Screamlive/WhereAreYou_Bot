@@ -20,6 +20,10 @@ from webapp_readonly import (
 )
 
 WEBAPP_STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
+try:
+    from config import WEBAPP_ALLOW_DEV_FALLBACK as CONFIG_WEBAPP_ALLOW_DEV_FALLBACK
+except ImportError:
+    CONFIG_WEBAPP_ALLOW_DEV_FALLBACK = False
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -27,6 +31,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_dev_fallback() -> bool:
+    return _env_flag("WEBAPP_ALLOW_DEV_FALLBACK", default=bool(CONFIG_WEBAPP_ALLOW_DEV_FALLBACK))
 
 
 def _status_from_error(exc: WebAppAccessError) -> int:
@@ -84,7 +92,7 @@ def _extract_user_id(request: web.Request) -> int:
         return _verify_telegram_init_data(init_data)
 
     # Dev fallback for local testing without Telegram WebApp.
-    if _env_flag("WEBAPP_ALLOW_DEV_FALLBACK", default=False):
+    if _allow_dev_fallback():
         user_id_raw = request.headers.get("X-Telegram-User-Id")
         if user_id_raw and user_id_raw.isdigit():
             return int(user_id_raw)
