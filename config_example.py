@@ -3,3 +3,4 @@
 
 TOKEN = "PUT_YOUR_TOKEN_HERE"
 DB_NAME = "bot_database.db"
+WEBAPP_URL = "https://example.com/webapp"

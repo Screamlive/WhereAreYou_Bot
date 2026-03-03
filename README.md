@@ -29,6 +29,7 @@ python bot.py
 Файл `config.py`:
 - `TOKEN` — токен бота от BotFather.
 - `DB_NAME` — имя файла SQLite.
+- `WEBAPP_URL` — публичный HTTPS URL WebApp (например, `https://example.com/webapp`).
 
 Важно: `database.py` использует имя базы по умолчанию `bot_database.db`.
 Если меняете `DB_NAME`, синхронизируйте значение в `database.py`.
@@ -56,6 +57,36 @@ sqlite3 bot_database.db "UPDATE users SET is_admin=1, is_approved=1 WHERE telegr
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## WebApp (read-only пересечения)
+
+Вход для пользователя:
+- кнопка **«Пересечения (WebApp)»** в главном меню бота;
+- кнопка показывается, если задан `WEBAPP_URL` (в `config.py` или через env `WEBAPP_URL`).
+
+Запуск backend WebApp:
+```
+source .venv/bin/activate
+python webapp_api.py
+```
+
+Открытие в браузере для локальной проверки (без Telegram):
+```
+WEBAPP_ALLOW_DEV_FALLBACK=1 python webapp_api.py
+curl -H "X-Telegram-User-Id: <telegram_id>" "http://127.0.0.1:8080/webapp/v1/me"
+```
+
+Важно по безопасности:
+- для production используется только Telegram `initData` (dev fallback выключен по умолчанию);
+- URL WebApp публичный, но запросы без валидного `initData` получают `401/403`;
+- для Telegram WebApp нужен HTTPS-домен и настройка домена через BotFather (`/setdomain`).
+
+Доступный функционал:
+- scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);
+- период: `Текущий год / Текущий месяц / Следующие 90 дней`;
+- фильтры: статусы, категории, поиск по ФИО/username;
+- `Конфликт от`: подсветка дней с высокой нагрузкой;
+- `Экспорт XLSX`: выгрузка текущего вида с учетом активных фильтров и ACL.
 
 ## Ежедневные уведомления
 

@@ -23,6 +23,9 @@ from webapp_api import (
 
 class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.prev_dev_fallback = os.environ.get("WEBAPP_ALLOW_DEV_FALLBACK")
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "1"
+
         fd, path = tempfile.mkstemp(prefix="bot_webapp_api_", suffix=".db")
         os.close(fd)
         self.db_path = path
@@ -42,6 +45,11 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         )
 
     async def asyncTearDown(self):
+        if self.prev_dev_fallback is None:
+            os.environ.pop("WEBAPP_ALLOW_DEV_FALLBACK", None)
+        else:
+            os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = self.prev_dev_fallback
+
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
@@ -62,6 +70,16 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
 
     async def test_me_requires_context(self):
         request = make_mocked_request("GET", "/webapp/v1/me")
+        with self.assertRaises(web.HTTPUnauthorized):
+            await handle_me(request)
+
+    async def test_me_without_initdata_when_dev_fallback_disabled(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/me",
+            headers={"X-Telegram-User-Id": "9001"},
+        )
         with self.assertRaises(web.HTTPUnauthorized):
             await handle_me(request)
 
@@ -169,6 +187,15 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         archive = zipfile.ZipFile(BytesIO(response.body))
         self.assertIn("xl/workbook.xml", archive.namelist())
         self.assertIn("xl/worksheets/sheet1.xml", archive.namelist())
+
+    async def test_export_xlsx_respects_acl(self):
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/export/xlsx?scope_type=group&group_id=999&year=2026",
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        with self.assertRaises(web.HTTPForbidden):
+            await handle_export_xlsx(request)
 
 
 if __name__ == "__main__":

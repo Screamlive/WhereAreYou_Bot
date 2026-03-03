@@ -22,6 +22,13 @@ from webapp_readonly import (
 WEBAPP_STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _status_from_error(exc: WebAppAccessError) -> int:
     return exc.status_code if 400 <= exc.status_code < 600 else 403
 
@@ -77,11 +84,12 @@ def _extract_user_id(request: web.Request) -> int:
         return _verify_telegram_init_data(init_data)
 
     # Dev fallback for local testing without Telegram WebApp.
-    user_id_raw = request.headers.get("X-Telegram-User-Id")
-    if user_id_raw and user_id_raw.isdigit():
-        return int(user_id_raw)
+    if _env_flag("WEBAPP_ALLOW_DEV_FALLBACK", default=False):
+        user_id_raw = request.headers.get("X-Telegram-User-Id")
+        if user_id_raw and user_id_raw.isdigit():
+            return int(user_id_raw)
 
-    raise WebAppAccessError("Не передан контекст пользователя.", status_code=401)
+    raise WebAppAccessError("Не передан Telegram initData.", status_code=401)
 
 
 def _parse_list_param(raw: str | None) -> list[str] | None:
