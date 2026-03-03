@@ -27,6 +27,7 @@ const state = {
   initData: "",
   devUserId: "",
   initDataSource: "",
+  gridScroller: null,
 };
 
 const monthFormatter = new Intl.DateTimeFormat("ru-RU", { month: "short" });
@@ -653,6 +654,7 @@ async function openAbsenceDetails(absenceId) {
 
 function renderTimeline(overlaps) {
   state.overlaps = overlaps;
+  state.gridScroller = null;
   timelineBody.innerHTML = "";
   timelineWrap.classList.remove("hidden");
 
@@ -698,12 +700,28 @@ function renderTimeline(overlaps) {
   const todayOffset = daysBetween(startDate, todayIso());
   const todayInRange = todayOffset >= 0 && todayOffset < daysTotal;
 
-  overlaps.users.forEach((user) => {
-    const row = document.createElement("div");
-    row.className = "timeline-row";
+  const bodyInner = document.createElement("div");
+  bodyInner.className = "timeline-body-inner";
 
+  const usersCol = document.createElement("div");
+  usersCol.className = "users-col";
+
+  const gridScroll = document.createElement("div");
+  gridScroll.className = "timeline-grid-scroll";
+
+  const grid = document.createElement("div");
+  grid.className = "timeline-grid";
+  grid.style.width = `${trackWidth}px`;
+  grid.style.minWidth = `${trackWidth}px`;
+
+  gridScroll.appendChild(grid);
+  bodyInner.appendChild(usersCol);
+  bodyInner.appendChild(gridScroll);
+  timelineBody.appendChild(bodyInner);
+
+  overlaps.users.forEach((user) => {
     const left = document.createElement("div");
-    left.className = "user-cell sticky";
+    left.className = "user-cell user-cell-row";
     const name = document.createElement("div");
     name.className = "user-name";
     name.textContent = user.fullname;
@@ -712,6 +730,10 @@ function renderTimeline(overlaps) {
     meta.textContent = user.username ? `@${user.username}` : `ID ${user.user_id}`;
     left.appendChild(name);
     left.appendChild(meta);
+    usersCol.appendChild(left);
+
+    const trackRow = document.createElement("div");
+    trackRow.className = "track-row";
 
     const track = document.createElement("div");
     track.className = "track";
@@ -755,14 +777,16 @@ function renderTimeline(overlaps) {
       track.appendChild(bar);
     });
 
-    row.appendChild(left);
-    row.appendChild(track);
-    timelineBody.appendChild(row);
+    trackRow.appendChild(track);
+    grid.appendChild(trackRow);
   });
 
-  timelineBody.onscroll = () => {
-    monthsInner.style.transform = `translateX(${-timelineBody.scrollLeft}px)`;
+  state.gridScroller = gridScroll;
+  const syncHeader = () => {
+    monthsInner.style.transform = `translateX(${-gridScroll.scrollLeft}px)`;
   };
+  syncHeader();
+  gridScroll.onscroll = syncHeader;
 }
 
 function currentScopeQuery() {
@@ -797,6 +821,10 @@ function scrollToToday() {
     return;
   }
   const targetLeft = Math.max(marker.offsetLeft - 80, 0);
+  if (state.gridScroller) {
+    state.gridScroller.scrollTo({ left: targetLeft, behavior: "smooth" });
+    return;
+  }
   timelineBody.scrollTo({ left: targetLeft, behavior: "smooth" });
 }
 
