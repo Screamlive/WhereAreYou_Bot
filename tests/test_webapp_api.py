@@ -3,7 +3,10 @@ import os
 import tempfile
 import unittest
 import zipfile
+import hashlib
+import hmac
 from io import BytesIO
+from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -12,6 +15,7 @@ import config
 import database
 import db_repo
 from webapp_api import (
+    _verify_telegram_init_data,
     create_app,
     handle_absence,
     handle_export_xlsx,
@@ -62,6 +66,79 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/webapp/v1/overlaps", paths)
         self.assertIn("/webapp/v1/export/xlsx", paths)
         self.assertIn("/webapp/v1/absence/{absence_id}", paths)
+
+    def _build_valid_init_data(self, user_id: int = 9001, auth_date: int = 4102444800) -> str:
+        # Fixed future auth_date keeps the sample valid in tests.
+        user_json = json.dumps({"id": user_id, "first_name": "Test", "username": "u9001"}, separators=(",", ":"))
+        pairs = {
+            "auth_date": str(auth_date),
+            "query_id": "AAEAAAE",
+            "user": user_json,
+        }
+        data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(pairs.items()))
+        secret = hmac.new(b"WebAppData", config.TOKEN.encode(), hashlib.sha256).digest()
+        digest = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
+        parts = [f"{key}={quote(value, safe='')}" for key, value in pairs.items()]
+        parts.append(f"hash={digest}")
+        return "&".join(parts)
+
+    async def test_verify_init_data_accepts_encoded_variants(self):
+        raw_init_data = self._build_valid_init_data()
+        encoded_once_more = quote(raw_init_data, safe="")
+        prefixed_tma = f"tma {raw_init_data}"
+
+        self.assertEqual(_verify_telegram_init_data(raw_init_data), 9001)
+        self.assertEqual(_verify_telegram_init_data(encoded_once_more), 9001)
+        self.assertEqual(_verify_telegram_init_data(prefixed_tma), 9001)
+
+    async def test_me_accepts_initdata_from_referer(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        init_data = self._build_valid_init_data()
+        referer = f"https://bot-test.justasite.cc/webapp?tgWebAppData={quote(init_data, safe='')}"
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/me",
+            headers={"Referer": referer},
+        )
+        response = await handle_me(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["user"]["id"], 9001)
+
+    async def test_me_accepts_initdata_from_authorization_tma(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        init_data = self._build_valid_init_data()
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/me",
+            headers={"Authorization": f"tma {init_data}"},
+        )
+        response = await handle_me(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["user"]["id"], 9001)
+
+    async def test_me_accepts_initdata_from_cookie(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        init_data = self._build_valid_init_data()
+        cookie_header = f"tg_init_data={quote(init_data, safe='')}"
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/me",
+            headers={"Cookie": cookie_header},
+        )
+        response = await handle_me(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["user"]["id"], 9001)
+
+    async def test_me_accepts_initdata_from_query_tgwebappdata(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        init_data = self._build_valid_init_data()
+        request = make_mocked_request(
+            "GET",
+            f"/webapp/v1/me?tgWebAppData={quote(init_data, safe='')}",
+        )
+        response = await handle_me(request)
+        payload = json.loads(response.text)
+        self.assertEqual(payload["user"]["id"], 9001)
 
     async def test_index_is_file_response(self):
         request = make_mocked_request("GET", "/webapp")

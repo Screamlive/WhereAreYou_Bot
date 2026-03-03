@@ -1,7 +1,10 @@
 from aiogram import Router, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+import os
+import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from core import (
     is_superadmin,
@@ -57,8 +60,32 @@ from texts import (
     TEXT_UNKNOWN_COMMAND,
     TEXT_CANCEL_BUTTON,
 )
+from config import WEBAPP_URL
 
 router = Router()
+
+
+def _resolve_webapp_url() -> str:
+    env_url = (os.getenv("WEBAPP_URL") or "").strip()
+    if env_url:
+        return env_url
+    return (WEBAPP_URL or "").strip()
+
+
+def _webapp_inline_markup() -> InlineKeyboardMarkup | None:
+    url = _resolve_webapp_url()
+    if not url:
+        return None
+    # Bust Telegram Desktop webview cache for index.html.
+    parts = urlsplit(url)
+    query_items = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query_items["wa_ts"] = str(int(time.time()))
+    fresh_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), parts.fragment))
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть WebApp", web_app=WebAppInfo(url=fresh_url))]
+        ]
+    )
 
 
 def _superadmin_filter_label(user_id: int) -> str:
@@ -313,6 +340,19 @@ async def cmd_start(message: types.Message):
         return
 
     await message.answer("Добро пожаловать, Пользователь!", reply_markup=get_role_menu(tg_id))
+
+
+@router.message(Command("webapp"))
+@router.message(lambda msg: msg.text == "Пересечения (WebApp)")
+async def open_webapp_via_inline_button(message: types.Message):
+    if not user_exists_in_db(message.from_user.id) or not is_user_approved(message.from_user.id):
+        await message.answer(TEXT_NO_RIGHTS)
+        return
+    markup = _webapp_inline_markup()
+    if not markup:
+        await message.answer("WebApp URL не настроен.")
+        return
+    await message.answer("Откройте WebApp:", reply_markup=markup)
 
 
 ###############################################################################

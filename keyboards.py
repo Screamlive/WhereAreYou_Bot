@@ -1,6 +1,6 @@
 import os
 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 BACK_BUTTON_TEXT = "Вернуться в меню"
 TWO_COLUMN_MAX_LABEL_LEN = 22
@@ -23,7 +23,9 @@ def _build_webapp_button() -> KeyboardButton | None:
         url = (os.getenv("WEBAPP_URL") or "").strip()
     if not url:
         return None
-    return KeyboardButton(text="Пересечения (WebApp)", web_app=WebAppInfo(url=url))
+    # Use a regular reply button and open WebApp via inline button from handler.
+    # This is more reliable on Telegram Desktop than direct reply web_app buttons.
+    return KeyboardButton(text="Пересечения (WebApp)")
 
 
 def _build_menu(rows: list[list[str | KeyboardButton]]) -> ReplyKeyboardMarkup:

@@ -1,10 +1,11 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote, urlparse
 from urllib.parse import quote
 
 from aiohttp import web
@@ -20,6 +21,7 @@ from webapp_readonly import (
 )
 
 WEBAPP_STATIC_DIR = Path(__file__).resolve().parent / "webapp_static"
+logger = logging.getLogger(__name__)
 try:
     from config import WEBAPP_ALLOW_DEV_FALLBACK as CONFIG_WEBAPP_ALLOW_DEV_FALLBACK
 except ImportError:
@@ -54,7 +56,8 @@ def _http_error(exc: WebAppAccessError) -> web.HTTPException:
 
 
 def _verify_telegram_init_data(init_data: str) -> int:
-    parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    normalized_init_data = _normalize_init_data(init_data)
+    parsed = dict(parse_qsl(normalized_init_data, keep_blank_values=True))
     provided_hash = parsed.pop("hash", None)
     if not provided_hash:
         raise WebAppAccessError("Отсутствует hash в initData.", status_code=401)
@@ -86,10 +89,79 @@ def _verify_telegram_init_data(init_data: str) -> int:
     return user_id
 
 
+def _normalize_init_data(init_data: str) -> str:
+    value = (init_data or "").strip()
+
+    # Some clients send Authorization: tma <initData>.
+    if value.lower().startswith("tma "):
+        value = value[4:].strip()
+
+    # If full launch hash query is passed, extract tgWebAppData.
+    if value.startswith("tgWebAppData="):
+        parsed = dict(parse_qsl(value, keep_blank_values=True))
+        tg_data = parsed.get("tgWebAppData")
+        if tg_data:
+            value = tg_data
+
+    # Defensive: accept initData encoded one more time as a whole string.
+    if "hash=" not in value and ("%26" in value or "%3D" in value):
+        decoded = unquote(value)
+        if "hash=" in decoded:
+            value = decoded
+
+    return value
+
+
+def _extract_init_data_from_url(raw_url: str | None) -> str:
+    if not raw_url:
+        return ""
+    try:
+        parsed = urlparse(raw_url)
+    except Exception:
+        return ""
+
+    # Query params (normal case).
+    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    for key in ("tgWebAppData", "init_data", "initData"):
+        value = query_params.get(key)
+        if value:
+            return value
+
+    # Hash fragment fallback.
+    fragment = parsed.fragment or ""
+    if fragment.startswith("/?"):
+        fragment = fragment[2:]
+    elif fragment.startswith("?"):
+        fragment = fragment[1:]
+    fragment_params = dict(parse_qsl(fragment, keep_blank_values=True))
+    for key in ("tgWebAppData", "init_data", "initData"):
+        value = fragment_params.get(key)
+        if value:
+            return value
+    return ""
+
+
 def _extract_user_id(request: web.Request) -> int:
-    init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("init_data")
+    auth_header = (request.headers.get("Authorization") or "").strip()
+    if auth_header.lower().startswith("tma "):
+        return _verify_telegram_init_data(auth_header[4:].strip())
+
+    init_data = (
+        request.headers.get("X-Telegram-Init-Data")
+        or request.query.get("init_data")
+        or request.query.get("tgWebAppData")
+    )
     if init_data:
         return _verify_telegram_init_data(init_data)
+
+    cookie_init_data = request.cookies.get("tg_init_data")
+    if cookie_init_data:
+        return _verify_telegram_init_data(cookie_init_data)
+
+    referer_raw = request.headers.get("Referer") or ""
+    referer_init_data = _extract_init_data_from_url(referer_raw)
+    if referer_init_data:
+        return _verify_telegram_init_data(referer_init_data)
 
     # Dev fallback for local testing without Telegram WebApp.
     if _allow_dev_fallback():
@@ -97,6 +169,22 @@ def _extract_user_id(request: web.Request) -> int:
         if user_id_raw and user_id_raw.isdigit():
             return int(user_id_raw)
 
+    logger.warning(
+        (
+            "WebApp auth context is missing: path=%s has_auth=%s has_init_header=%s "
+            "has_init_cookie=%s has_referer=%s referer_has_tg=%s referer_has_init=%s referer_len=%s referer=%s ua=%s"
+        ),
+        request.path_qs,
+        bool(auth_header),
+        bool(request.headers.get("X-Telegram-Init-Data")),
+        bool(request.cookies.get("tg_init_data")),
+        bool(referer_raw),
+        "tgWebAppData=" in referer_raw,
+        "init_data=" in referer_raw or "initData=" in referer_raw,
+        len(referer_raw),
+        referer_raw[:200],
+        (request.headers.get("User-Agent") or "")[:120],
+    )
     raise WebAppAccessError("Не передан Telegram initData.", status_code=401)
 
 

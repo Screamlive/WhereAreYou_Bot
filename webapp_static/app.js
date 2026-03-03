@@ -26,6 +26,7 @@ const state = {
   overlaps: null,
   initData: "",
   devUserId: "",
+  initDataSource: "",
 };
 
 const monthFormatter = new Intl.DateTimeFormat("ru-RU", { month: "short" });
@@ -55,6 +56,35 @@ const STATUS_LABELS = {
 
 let searchDebounceTimer = null;
 let resizeDebounceTimer = null;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hasInitDataInQueryOrHash() {
+  const parse = (raw) => {
+    if (!raw) return false;
+    const params = new URLSearchParams(raw);
+    return Boolean(params.get("tgWebAppData") || params.get("init_data") || params.get("initData"));
+  };
+  const fromQuery = parse(window.location.search.slice(1));
+  const hashRaw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  const fromHash = parse(hashRaw);
+  return fromQuery || fromHash;
+}
+
+function buildClientDiag() {
+  const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const unsafeUserId = tg?.initDataUnsafe?.user?.id;
+  return {
+    tgObject: Boolean(tg),
+    initDataLen: state.initData ? state.initData.length : 0,
+    initDataSource: state.initDataSource || "none",
+    unsafeUserId: unsafeUserId ? String(unsafeUserId) : "",
+    queryOrHashHasInit: hasInitDataInQueryOrHash(),
+    hrefHasTgData: window.location.href.includes("tgWebAppData"),
+  };
+}
 
 function formatLocalIso(date) {
   const y = date.getFullYear();
@@ -151,12 +181,12 @@ async function apiGet(path, query = {}) {
     }
   });
 
-  if (state.initData) {
-    url.searchParams.set("init_data", state.initData);
-  }
-
   const headers = {};
-  if (!state.initData && state.devUserId) {
+  if (state.initData) {
+    headers["X-Telegram-Init-Data"] = state.initData;
+    headers.Authorization = `tma ${state.initData}`;
+    url.searchParams.set("init_data", state.initData);
+  } else if (state.devUserId) {
     headers["X-Telegram-User-Id"] = state.devUserId;
   }
 
@@ -168,6 +198,21 @@ async function apiGet(path, query = {}) {
   return JSON.parse(body);
 }
 
+function persistInitData(value, source) {
+  const normalized = (value || "").trim();
+  if (!normalized) {
+    return false;
+  }
+  state.initData = normalized;
+  state.initDataSource = source || state.initDataSource || "unknown";
+  const encoded = encodeURIComponent(state.initData);
+  document.cookie = `tg_init_data=${encoded}; Path=/; SameSite=Lax; Secure`;
+  if (window.localStorage) {
+    window.localStorage.setItem("tg_init_data", state.initData);
+  }
+  return true;
+}
+
 async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
   const url = new URL(path, window.location.origin);
   Object.entries(query).forEach(([key, value]) => {
@@ -176,12 +221,12 @@ async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
     }
   });
 
-  if (state.initData) {
-    url.searchParams.set("init_data", state.initData);
-  }
-
   const headers = {};
-  if (!state.initData && state.devUserId) {
+  if (state.initData) {
+    headers["X-Telegram-Init-Data"] = state.initData;
+    headers.Authorization = `tma ${state.initData}`;
+    url.searchParams.set("init_data", state.initData);
+  } else if (state.devUserId) {
     headers["X-Telegram-User-Id"] = state.devUserId;
   }
 
@@ -214,10 +259,62 @@ async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
 
 function detectTelegramContext() {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-  if (!tg) return;
-  tg.ready();
-  tg.expand();
-  state.initData = tg.initData || "";
+  if (tg && !state.initData) {
+    try {
+      tg.ready();
+      tg.expand();
+    } catch (_err) {
+      // no-op: keep fallback extraction flow below
+    }
+    persistInitData(tg.initData || "", "telegram_sdk");
+  }
+
+  if (!state.initData) {
+    const tryExtract = (raw) => {
+      if (!raw) return "";
+      const params = new URLSearchParams(raw);
+      return (
+        params.get("tgWebAppData")
+        || params.get("init_data")
+        || params.get("initData")
+        || ""
+      );
+    };
+
+    const fromQuery = tryExtract(window.location.search.slice(1));
+    if (fromQuery) {
+      persistInitData(fromQuery, "url_query");
+    } else {
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+      const fromHash = tryExtract(hash);
+      if (fromHash) {
+        persistInitData(fromHash, "url_hash");
+      }
+    }
+  }
+
+  if (!state.initData) {
+    const savedInitData = window.localStorage ? window.localStorage.getItem("tg_init_data") || "" : "";
+    if (savedInitData) {
+      persistInitData(savedInitData, "local_storage");
+    }
+  }
+}
+
+async function waitForTelegramInitData(timeoutMs = 2500) {
+  const startedAt = Date.now();
+  while (!state.initData && Date.now() - startedAt < timeoutMs) {
+    detectTelegramContext();
+    if (state.initData) {
+      return true;
+    }
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (tg && persistInitData(tg.initData || "", "telegram_sdk_wait")) {
+      return true;
+    }
+    await sleep(120);
+  }
+  return Boolean(state.initData);
 }
 
 function readDevQueryParams() {
@@ -732,14 +829,37 @@ async function exportCurrentViewXlsx() {
 async function init() {
   detectTelegramContext();
   readDevQueryParams();
+  await waitForTelegramInitData(2500);
 
   try {
     const profile = await apiGet("/webapp/v1/me");
     renderProfile(profile);
     await refreshData();
   } catch (error) {
+    const firstError = String(error?.message || "");
+    const needRetry = firstError.includes("Не передан Telegram initData");
+
+    if (needRetry) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      detectTelegramContext();
+      try {
+        const profile = await apiGet("/webapp/v1/me");
+        renderProfile(profile);
+        await refreshData();
+        return;
+      } catch (retryError) {
+        const diag = buildClientDiag();
+        timelineWrap.classList.add("hidden");
+        statusLine.textContent = `Ошибка: ${retryError.message}`;
+        subtitle.textContent = state.initData
+          ? `Профиль не загружен (initData: ${diag.initDataSource}, len=${diag.initDataLen}).`
+          : `Профиль не загружен: initData пустой (tg=${diag.tgObject ? "1" : "0"}, unsafe_user=${diag.unsafeUserId ? "1" : "0"}, query/hash=${diag.queryOrHashHasInit ? "1" : "0"}).`;
+        return;
+      }
+    }
+
     timelineWrap.classList.add("hidden");
-    statusLine.textContent = `Ошибка: ${error.message}`;
+    statusLine.textContent = `Ошибка: ${firstError}`;
     subtitle.textContent = "Не удалось загрузить профиль.";
   }
 }
