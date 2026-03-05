@@ -1,7 +1,7 @@
 # RFC: Усиление безопасности бота и WebApp
 
 Дата: 2026-03-05  
-Статус: In Progress
+Статус: In Progress (остался внешний инфраструктурный шаг)
 
 ## Статус выполнения (на 2026-03-05)
 
@@ -162,7 +162,7 @@ Telegram не дает “железного” transport-level маркера, 
 - Проверка через `curl -I` показывает обязательные headers.
 - Сценарии Nginx/Tunnel описаны единообразно.
 
-Текущий статус: реализовано в коде и шаблонах, требуется финальная проверка на боевом edge.
+Текущий статус: выполнено (код, шаблоны и edge-проверка заголовков пройдены).
 
 ### Итерация S3 — Auth hardening
 
@@ -174,7 +174,7 @@ Telegram не дает “железного” transport-level маркера, 
 - Нагрузочный smoke не приводит к деградации.
 - Без `initData` данные недоступны стабильно во всех роутингах.
 
-Текущий статус: реализовано в коде и unit-тестах, требуется финальный edge smoke (429).
+Текущий статус: выполнено (код, unit-тесты и edge-smoke `401/429` пройдены).
 
 ### Итерация S4 — Security tests & release gate
 
@@ -190,7 +190,7 @@ Telegram не дает “железного” transport-level маркера, 
 - Security test suite green.
 - Release checklist формализован.
 
-Текущий статус: частично (локальный и CI gate внедрены, branch protection еще не закреплен).
+Текущий статус: почти завершено (локальный и CI gate внедрены; остается включить branch protection в GitHub).
 
 ## 7) Тестовая стратегия безопасности
 
@@ -233,3 +233,17 @@ Telegram не дает “железного” transport-level маркера, 
 Текущая система уже имеет правильный базис (initData + ACL), но для
 production-grade уровня нужен формализованный hardening по сети, логам,
 headers и release-gate на security тестах.
+
+## 11) Что осталось для полного закрытия RFC
+
+Единственный незавершенный пункт в рамках репозитория:  
+`branch protection` для `main` с обязательным статус-чеком `security-gate`.
+
+Минимальные шаги:
+1. GitHub -> Settings -> Rules -> Rulesets (или Branch protection).
+2. Target branch: `main`.
+3. Включить:
+   - `Require a pull request before merging`;
+   - `Require status checks to pass`.
+4. Добавить обязательный check: `security-gate`.
+5. Сохранить ruleset и проверить PR: merge блокируется при красном `security-gate`.
