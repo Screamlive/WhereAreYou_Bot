@@ -229,6 +229,11 @@ Security gate перед релизом:
 ./scripts/security_gate.sh
 ```
 
+CI gate:
+- workflow `security-gate` запускается на `pull_request` в `main` и на `push` в `main`:
+  `.github/workflows/security-gate.yml`;
+- рекомендуется включить branch protection для `main` с обязательным статус-чеком `security-gate`.
+
 Доступный функционал:
 - scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);
 - период: `Текущий год / Текущий месяц / Следующие 90 дней`;

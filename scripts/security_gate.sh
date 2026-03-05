@@ -5,7 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"
-if [[ ! -x "${PYTHON_BIN}" ]]; then
+if [[ -x "${PYTHON_BIN}" ]]; then
+  :
+elif command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
+elif [[ "${PYTHON_BIN}" == "./.venv/bin/python" ]] && command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+else
   echo "ERROR: Python interpreter not found: ${PYTHON_BIN}" >&2
   exit 1
 fi

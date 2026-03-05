@@ -17,7 +17,8 @@
 - [x] S3: финальный ручной smoke rate limit на edge выполнен (`401`/`429` подтверждены).
 - [x] S4: добавлен локальный security gate-скрипт (`./scripts/security_gate.sh`).
 - [x] S4: добавлены frontend security-тесты на отсутствие хранения/утечек initData.
-- [ ] S4: CI release gate (автоматический блок merge/deploy при провале security gate).
+- [x] S4: CI workflow для security gate добавлен (`.github/workflows/security-gate.yml`).
+- [ ] S4: branch protection на `main` с обязательным check `security-gate`.
 
 ## 1) Цель
 
@@ -85,7 +86,7 @@ Telegram не дает “железного” transport-level маркера, 
 
 Базовые тесты есть (ACL/auth/sanitization/headers/rate limit), но не хватает:
 - интеграционных тестов с reverse proxy / tunnel профилями;
-- автоматизированного release gate в CI.
+- принудительного branch protection на `main` с обязательным security check.
 
 ## 5) Целевой security baseline (production)
 
@@ -186,7 +187,7 @@ Telegram не дает “железного” transport-level маркера, 
 - Security test suite green.
 - Release checklist формализован.
 
-Текущий статус: частично (база тестов расширена), полный release gate не внедрен.
+Текущий статус: частично (локальный и CI gate внедрены, branch protection еще не закреплен).
 
 ## 7) Тестовая стратегия безопасности
 
