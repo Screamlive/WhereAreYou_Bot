@@ -62,12 +62,17 @@ pytest
 
 Вход для пользователя:
 - кнопка **«Пересечения (WebApp)»** в главном меню бота;
+- далее бот присылает inline-кнопку **«Открыть WebApp»**;
 - кнопка показывается, если задан `WEBAPP_URL` (в `config.py` или через env `WEBAPP_URL`).
 
 Обязательные условия для Telegram WebApp в production:
 - публичный HTTPS домен;
 - домен прописан в BotFather через `/setdomain`;
 - backend не выдает данные без валидного `initData`.
+
+Нюанс Telegram Desktop:
+- самый стабильный путь открытия — через inline-кнопку `web_app` от бота;
+- прямой запуск WebApp как reply-кнопки может давать пустой `initData` в части desktop-клиентов.
 
 Запуск backend WebApp:
 ```
@@ -86,7 +91,9 @@ curl -H "X-Telegram-User-Id: <telegram_id>" "http://127.0.0.1:8080/webapp/v1/me"
 - URL WebApp публичный, но запросы без валидного `initData` получают `401/403`;
 - для Telegram WebApp нужен HTTPS-домен и настройка домена через BotFather (`/setdomain`).
 
-## Nginx и домен (production)
+## Варианты публикации WebApp (production)
+
+### Вариант A: Nginx + прямой DNS (A-запись)
 
 Системные пакеты (Ubuntu):
 ```
@@ -137,6 +144,51 @@ bot-test.example.com
 
 Примечание:
 - `requirements-system.txt` содержит список системных пакетов для деплоя.
+
+### Вариант B: Cloudflare Tunnel (без прямого входящего 443 на сервер)
+
+Подходит, если 443 уже занят другим сервисом на сервере (например, Xray) или
+не хотите светить origin через открытые web-порты.
+
+1) Поднимите backend WebApp локально:
+```
+source .venv/bin/activate
+WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
+```
+
+2) Настройте Cloudflare Tunnel:
+```
+cloudflared tunnel login
+cloudflared tunnel create telegram-webapp-test
+cloudflared tunnel route dns telegram-webapp-test bot-test.example.com
+```
+
+3) Пример `/etc/cloudflared/config.yml`:
+```
+tunnel: telegram-webapp-test
+credentials-file: /home/<user>/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: bot-test.example.com
+    service: http://127.0.0.1:8080
+  - service: http_status:404
+```
+
+4) Запустите tunnel как сервис:
+```
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared
+sudo systemctl status cloudflared
+```
+
+5) Для этого же бота в BotFather:
+```
+/setdomain
+bot-test.example.com
+```
+
+Важно:
+- для одного host в DNS не должно быть конфликтующих записей (A/AAAA/CNAME одновременно);
+- даже с tunnel доступ к данным защищается только backend-проверкой `initData`, не самим фактом HTTPS.
 
 Доступный функционал:
 - scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);
@@ -224,6 +276,8 @@ python broadcast.py --audience approved --changelog-latest
 
 - Подробное описание функций и ролей — в `DOCUMENTATION.md`.
 - Короткий пользовательский changelog — в `CHANGELOG.md`.
+- Архив реализованных RFC — в `docs/archive/`.
+- Активные RFC по следующим этапам — в `docs/rfc/`.
 
 ## Структура проекта
 

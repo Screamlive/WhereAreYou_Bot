@@ -174,6 +174,7 @@
 
 Отдельный интерфейс визуализации пересечений, не заменяющий основной чат-бот.
 Пользователь открывает его кнопкой **«Пересечения (WebApp)»** из главного меню.
+После этого бот отправляет inline-кнопку **«Открыть WebApp»** (основной путь запуска).
 
 Запуск backend:
 ```
@@ -201,13 +202,19 @@ python webapp_api.py
 - dev fallback по заголовку `X-Telegram-User-Id` работает только при
   `WEBAPP_ALLOW_DEV_FALLBACK=1` (локальная разработка);
 - публичный URL WebApp не должен отдавать данные без валидного `initData`.
+- для части Telegram Desktop клиентов reply-кнопка `web_app` менее стабильна,
+  поэтому рекомендуется запуск через inline-кнопку `web_app`.
 
 Инфраструктурные требования:
 - WebApp должен быть доступен по публичному HTTPS URL;
-- рекомендуется проксирование через Nginx (`/webapp`, `/webapp/static/`, `/webapp/v1/`);
+- поддерживаются 2 варианта публикации:
+  - Nginx reverse proxy (`/webapp`, `/webapp/static/`, `/webapp/v1/`);
+  - Cloudflare Tunnel (проксирование host -> `127.0.0.1:8080` без прямого входящего 443);
 - домен должен быть задан в BotFather через `/setdomain`;
 - тест и production рекомендуется разделять поддоменами
   (например, `bot-test.example.com` и `bot.example.com`).
+- при Cloudflare Tunnel нельзя держать конфликтующие DNS-записи одного host
+  (`A/AAAA/CNAME` одновременно).
 
 ## Сервисная рассылка (CLI)
 
@@ -244,6 +251,11 @@ python broadcast.py --audience approved --changelog-latest
 
 Отправка сводок запускается отдельной задачей (например, через user‑timer systemd):
 файлы в `deploy/systemd-user/`. Уведомления отправляются только при наличии заявок.
+
+## RFC и архив
+
+- Реализованный RFC по read-only WebApp перенесен в архив: `docs/archive/WEBAPP_READONLY_RFC.md`.
+- Новые этапы проектирования (безопасность, операционная CLI-панель) ведутся в `docs/rfc/`.
 
 ## База данных
 
