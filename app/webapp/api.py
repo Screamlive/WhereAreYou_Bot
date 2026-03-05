@@ -10,7 +10,7 @@ from aiohttp import web
 from app.webapp import auth as webapp_auth
 from app.webapp.http import rate_limit_middleware, security_headers_middleware
 from webapp_export import build_overlaps_export_filename, build_overlaps_xlsx
-from webapp_readonly import (
+from app.webapp.service import (
     WebAppAccessError,
     get_absence_details_payload,
     get_overlaps_payload,

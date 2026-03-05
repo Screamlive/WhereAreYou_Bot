@@ -27,6 +27,7 @@
 - [x] R5: HTTP middleware WebApp API (security headers + rate limit) вынесены из `webapp_api.py` в `app/webapp/http.py` с сохранением совместимого API.
 - [x] R5: Auth/initData логика WebApp API вынесена из `webapp_api.py` в `app/webapp/auth.py` с сохранением совместимого API для тестов.
 - [x] R5: API handlers/factory WebApp вынесены в `app/webapp/api.py`; `webapp_api.py` оставлен как совместимый shim с экспортом прежних символов.
+- [x] R5: readonly-логика WebApp вынесена в `app/webapp/service.py`; `webapp_readonly.py` оставлен как совместимый shim.
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
 - [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
 - [x] R3: SQL-реализация перенесена в тематические модули (`users`, `groups`, `absences`, `logs`).
