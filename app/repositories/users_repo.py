@@ -1,6 +1,6 @@
 """User-related repository facade."""
 
-from app.db.db_repo import (
+from app.db.users import (
     approve_user as _approve_user,
     delete_user_and_related as _delete_user_and_related,
     get_last_group_id as _get_last_group_id,

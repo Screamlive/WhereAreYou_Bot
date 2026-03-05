@@ -15,9 +15,11 @@
 - [x] R3: `core.py` и `webapp_readonly.py` переведены на фасады репозиториев без изменения поведения.
 - [x] R3: `handlers/{admin,absences,groups,menus}.py` переведены на фасады репозиториев, прямые импорты `db_repo` убраны.
 - [x] R3: реализация `db_repo.py` перенесена в `app/db/db_repo.py`; корневой `db_repo.py` оставлен как совместимый shim.
+- [x] R3: введены тематические db-модули (`app/db/users.py`, `app/db/groups.py`, `app/db/absences.py`, `app/db/logs.py`) и переключены фасады репозиториев на них.
+- [x] R3: модуль `app/db/users.py` переведен с re-export на собственную SQL-реализацию (с сохранением совместимости `db_repo.DB_NAME` для тестов).
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
 - [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
-- [ ] R3: декомпозировать `app/db/db_repo.py` на тематические подмодули (`users/groups/absences`) под существующими фасадами.
+- [ ] R3: перенести SQL-реализацию из `app/db/db_repo.py` в тематические модули (`groups`, `absences`, `logs`).
 
 ## 1) Проблема
 

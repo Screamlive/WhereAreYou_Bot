@@ -1,6 +1,6 @@
 """Absence-related repository facade."""
 
-from app.db.db_repo import (
+from app.db.absences import (
     create_absence as _create_absence,
     create_edit_request as _create_edit_request,
     delete_absence as _delete_absence,

@@ -1,6 +1,6 @@
 """Group-related repository facade."""
 
-from app.db.db_repo import (
+from app.db.groups import (
     add_group_membership as _add_group_membership,
     create_group as _create_group,
     create_group_request as _create_group_request,
