@@ -54,6 +54,11 @@ from app.use_cases.absence_moderation import (
     build_edit_approve_user_text,
     build_edit_request_admin_text,
 )
+from app.use_cases.absence_exports import (
+    build_absence_export_csv_text,
+    build_absence_export_filename,
+    build_today_absences_report,
+)
 from app.use_cases.absence_requests import (
     build_added_for_another_text,
     build_admin_request_submitted_text,
@@ -1403,23 +1408,12 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    lines = ["fullname;username;category;start_date;end_date;comment"]
-    for (_uid, cat, sd, ed, cmnt, fname, uname) in rows:
-        cmnt_esc = (cmnt or "").replace(";", ",")
-        if uname:
-            user_str = f"{fname} (@{uname})"
-        else:
-            user_str = f"{fname}"
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        lines.append(f"{user_str};{uname or ''};{cat};{sd_disp};{ed_disp};{cmnt_esc}")
-
-    csv_text = "\n".join(lines)
+    csv_text = build_absence_export_csv_text(rows)
     bom = b'\xef\xbb\xbf'
     csv_bytes = bom + csv_text.encode('utf-8')
     buf = BytesIO(csv_bytes)
     buf.seek(0)
-    input_file = BufferedInputFile(buf.getvalue(), filename=f"absences_{sds_disp}_{eds_disp}.csv")
+    input_file = BufferedInputFile(buf.getvalue(), filename=build_absence_export_filename(sds, eds))
 
     await message.answer_document(document=input_file, caption="CSV-выгрузка.")
 
@@ -1455,16 +1449,7 @@ async def show_absences_today(message: types.Message):
         await message.answer(f"На сегодня ({today_display}) нет одобренных отсутствий.")
         return
 
-    lines = []
-    for (_uid, category, sd, ed, cmnt, fullname, _username) in rows:
-        start_disp = format_date_display(sd)
-        end_disp = format_date_display(ed)
-        user_str = fullname
-        comment_str = cmnt if cmnt else "—"
-        line = f"{user_str} ({category}, {start_disp} - {end_disp}), комментарий: {comment_str}"
-        lines.append(line)
-
-    result_text = f"Отсутствия на сегодня ({today_display}):\n\n" + "\n\n".join(lines)
+    result_text = build_today_absences_report(today_display, rows)
     await message.answer(result_text)
 
     log_action(message.from_user.id, f"Выгрузка за сегодня: {today_display}")
