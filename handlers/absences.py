@@ -47,6 +47,13 @@ from app.use_cases.absence_overlaps import (
     collect_overlaps_for_requester,
     get_absence_recipients,
 )
+from app.use_cases.absence_moderation import (
+    build_absence_decision,
+    build_delete_decision,
+    build_edit_approve_admin_text,
+    build_edit_approve_user_text,
+    build_edit_request_admin_text,
+)
 from app.use_cases.absence_requests import (
     build_added_for_another_text,
     build_admin_request_submitted_text,
@@ -595,29 +602,19 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         return
 
     _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
-    old_sd_disp = format_date_display(old_sd)
-    old_ed_disp = format_date_display(old_ed)
-    new_sd_disp = format_date_display(new_sd)
-    new_ed_disp = format_date_display(new_ed)
 
     req_id = create_edit_request(abs_id, new_cat, new_sd, new_ed, comment, user_id)
-
-    old_part = (
-        f"Старое:\n"
-        f"Категория: {old_cat}\n"
-        f"Даты: {old_sd_disp}–{old_ed_disp}\n"
-        f"Комментарий: {old_cmnt or '—'}\n\n"
-    )
-    new_part = (
-        f"Новое:\n"
-        f"Категория: {new_cat}\n"
-        f"Даты: {new_sd_disp}–{new_ed_disp}\n"
-        f"Комментарий: {comment or '—'}\n\n"
-        f"(pending)"
-    )
-    text_admin = (
-        f"Пользователь {get_user_fullname(user_id)} хочет изменить заявку #{abs_id}.\n\n"
-        f"{old_part}{new_part}"
+    text_admin = build_edit_request_admin_text(
+        requester_fullname=get_user_fullname(user_id),
+        absence_id=abs_id,
+        old_category=old_cat,
+        old_start_date=old_sd,
+        old_end_date=old_ed,
+        old_comment=old_cmnt,
+        new_category=new_cat,
+        new_start_date=new_sd,
+        new_end_date=new_ed,
+        new_comment=comment,
     )
 
     overlaps_for_user = collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
@@ -685,33 +682,34 @@ async def edit_approval_callback(cb: CallbackQuery):
         await cb.answer()
         return
     _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
-    old_sd_disp = format_date_display(old_sd)
-    old_ed_disp = format_date_display(old_ed)
-    new_sd_disp = format_date_display(new_sd)
-    new_ed_disp = format_date_display(new_ed)
 
     if action == "approve_edit":
         update_absence(abs_id, new_cat, new_sd, new_ed, new_comment)
         delete_edit_request(req_id)
 
-        old_text = (
-            f"Старое:\nКатегория: {old_cat}\n"
-            f"Даты: {old_sd_disp}–{old_ed_disp}\n"
-            f"Комментарий: {old_cmnt or '—'}"
+        summary = build_edit_approve_admin_text(
+            absence_id=abs_id,
+            old_category=old_cat,
+            old_start_date=old_sd,
+            old_end_date=old_ed,
+            old_comment=old_cmnt,
+            new_category=new_cat,
+            new_start_date=new_sd,
+            new_end_date=new_ed,
+            new_comment=new_comment,
         )
-        new_text = (
-            f"Новое:\nКатегория: {new_cat}\n"
-            f"Даты: {new_sd_disp}–{new_ed_disp}\n"
-            f"Комментарий: {new_comment or '—'}"
-        )
-        summary = f"Изменение заявки #{abs_id} одобрено.\n\n{old_text}\n\n→ {new_text}"
         await cb.message.answer(summary)
 
         try:
             await bot.send_message(
                 user_id,
-                f"Ваше изменение заявки #{abs_id} одобрено!\n"
-                f"Теперь: {new_cat}, {new_sd_disp}–{new_ed_disp}, {new_comment or '—'}"
+                build_edit_approve_user_text(
+                    absence_id=abs_id,
+                    new_category=new_cat,
+                    new_start_date=new_sd,
+                    new_end_date=new_ed,
+                    new_comment=new_comment,
+                )
             )
         except Exception:
             pass
@@ -754,26 +752,18 @@ async def confirm_delete_absence(cb: CallbackQuery):
         return
 
     user_id, cat, sd, ed, _cmnt, _st = row
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
-    if action == "approve_del":
+    decision = build_delete_decision(action, abs_id, cat, sd, ed)
+    if decision.should_delete:
         delete_absence(abs_id)
-        await cb.message.answer(f"Удаление #{abs_id} одобрено. Запись удалена.")
-        log_action(admin_id, f"approve_del absence {abs_id}")
-        try:
-            await bot.send_message(user_id, f"Админ удалил вашу заявку #{abs_id}.")
-        except Exception:
-            pass
-    else:
-        await cb.message.answer(f"Удаление #{abs_id} отклонено.")
-        log_action(cb.from_user.id, f"decline_del absence {abs_id}")
-        try:
-            await bot.send_message(user_id, f"Админ отклонил удаление вашей заявки #{abs_id}.")
-        except Exception:
-            pass
+    await cb.message.answer(decision.admin_text)
+    log_action(admin_id, decision.log_text)
+    try:
+        await bot.send_message(user_id, decision.user_text)
+    except Exception:
+        pass
 
     await cb.answer()
 
@@ -857,24 +847,15 @@ async def callback_absence_approval(cb: CallbackQuery):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-    if action == "approve_abs":
-        new_status = "approved"
-        txt_admin = f"Заявка #{abs_id} одобрена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) одобрена!"
-    else:
-        new_status = "declined"
-        txt_admin = f"Заявка #{abs_id} отклонена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) отклонена."
+    decision = build_absence_decision(action, abs_id, cat, sd, ed)
 
-    update_absence_status(abs_id, new_status)
+    update_absence_status(abs_id, decision.new_status)
 
-    await cb.message.answer(txt_admin)
+    await cb.message.answer(decision.admin_text)
     log_action(admin_id, f"{action} absence {abs_id}")
 
     try:
-        await bot.send_message(user_id, txt_user)
+        await bot.send_message(user_id, decision.user_text)
     except Exception:
         pass
 
