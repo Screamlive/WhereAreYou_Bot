@@ -218,6 +218,31 @@ def _parse_overlaps_query(request: web.Request) -> dict:
     }
 
 
+@web.middleware
+async def security_headers_middleware(request: web.Request, handler):
+    try:
+        response = await handler(request)
+    except web.HTTPException as exc:
+        response = exc
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        (
+            "default-src 'self'; "
+            "script-src 'self' https://telegram.org; "
+            "style-src 'self'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org; "
+            "base-uri 'none'; form-action 'none'"
+        ),
+    )
+    return response
+
+
 async def handle_me(request: web.Request) -> web.Response:
     try:
         user_id = _extract_user_id(request)
@@ -278,7 +303,7 @@ async def handle_webapp_index(_request: web.Request) -> web.FileResponse:
 
 
 def create_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[security_headers_middleware])
     app.router.add_get("/webapp", handle_webapp_index)
     app.router.add_static("/webapp/static/", path=str(WEBAPP_STATIC_DIR), show_index=False)
     app.router.add_get("/webapp/v1/me", handle_me)

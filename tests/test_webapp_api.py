@@ -193,6 +193,28 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["user"]["id"], 9001)
         self.assertEqual(payload["role"], "user")
 
+    async def test_security_headers_present_for_webapp_routes(self):
+        request = make_mocked_request("GET", "/webapp")
+
+        async def ok_handler(_request):
+            return web.Response(text="ok")
+
+        index_resp = await webapp_api.security_headers_middleware(request, ok_handler)
+        self.assertEqual(index_resp.status, 200)
+        self.assertIn("Content-Security-Policy", index_resp.headers)
+        self.assertEqual(index_resp.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(index_resp.headers.get("X-Content-Type-Options"), "nosniff")
+
+        request_unauth = make_mocked_request("GET", "/webapp/v1/me")
+
+        async def unauthorized_handler(_request):
+            raise web.HTTPUnauthorized(text='{"error":"x"}', content_type="application/json")
+
+        api_resp = await webapp_api.security_headers_middleware(request_unauth, unauthorized_handler)
+        self.assertEqual(api_resp.status, 401)
+        self.assertIn("Content-Security-Policy", api_resp.headers)
+        self.assertEqual(api_resp.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
+
     async def test_overlaps_with_group_scope(self):
         request = make_mocked_request(
             "GET",
