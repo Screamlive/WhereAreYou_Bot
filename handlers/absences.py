@@ -47,6 +47,13 @@ from app.use_cases.absence_overlaps import (
     collect_overlaps_for_requester,
     get_absence_recipients,
 )
+from app.use_cases.absence_requests import (
+    build_added_for_another_text,
+    build_admin_request_submitted_text,
+    build_target_user_added_text,
+    build_user_request_submitted_text,
+    normalize_comment,
+)
 from app.repositories.users_repo import (
     get_approved_users,
     get_user_fullname,
@@ -254,18 +261,13 @@ async def process_end_date(message: types.Message, state: FSMContext):
 @router.message(AbsenceRequestFSM.waiting_for_comment)
 async def process_comment(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     cat = data["category"]
     sd = data["start_date"]
     ed = data["end_date"]
     await state.update_data(comment=comment)
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
     overlaps_text = collect_overlaps_for_requester(user_id, user_id, sd, ed)
     if overlaps_text:
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -286,8 +288,7 @@ async def process_comment(message: types.Message, state: FSMContext):
     abs_id = create_absence(user_id, cat, sd, ed, comment, "pending")
 
     await message.answer(
-        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd_disp} по {ed_disp}\n"
-        f"Комментарий: {comment or '—'}\nОтправлена на рассмотрение."
+        build_user_request_submitted_text(abs_id, cat, sd, ed, comment)
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
@@ -300,10 +301,13 @@ async def process_comment(message: types.Message, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id}:\n"
-            f"{cat} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            cat,
+            sd,
+            ed,
+            comment,
         )
         try:
             await _send_admin_request_with_overlaps(
@@ -341,12 +345,8 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
     comment = data.get("comment", "")
 
     abs_id = create_absence(user_id, cat, sd, ed, comment, "pending")
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
     await cb.message.answer(
-        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd_disp} по {ed_disp}\n"
-        f"Комментарий: {comment or '—'}\nОтправлена на рассмотрение."
+        build_user_request_submitted_text(abs_id, cat, sd, ed, comment)
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
@@ -358,10 +358,13 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id}:\n"
-            f"{cat} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            cat,
+            sd,
+            ed,
+            comment,
         )
         try:
             await _send_admin_request_with_overlaps(
@@ -577,9 +580,7 @@ async def edit_absence_end_date(message: types.Message, state: FSMContext):
 
 @router.message(EditAbsenceFSM.waiting_for_new_comment)
 async def edit_absence_comment(message: types.Message, state: FSMContext):
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     abs_id = data["abs_id"]
@@ -1638,23 +1639,24 @@ async def another_absence_end_date(message: types.Message, state: FSMContext):
 
 @router.message(AddAbsenceForAnotherFSM.waiting_for_comment)
 async def another_absence_comment(message: types.Message, state: FSMContext):
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     target_user_id = data["target_user_id"]
     category = data["category"]
     sd = data["start_date"]
     ed = data["end_date"]
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
     abs_id = create_absence(target_user_id, category, sd, ed, comment, "pending")
 
     await message.answer(
-        f"Отсутствие #{abs_id} добавлено пользователю {get_user_fullname(target_user_id)}.\n"
-        f"Категория: {category}, {sd_disp}–{ed_disp}\nКомментарий: {comment or '—'}\nСтатус: pending."
+        build_added_for_another_text(
+            abs_id,
+            get_user_fullname(target_user_id),
+            category,
+            sd,
+            ed,
+            comment,
+        )
     )
     log_action(message.from_user.id, f"AddAbsForAnother user={target_user_id}, abs_id={abs_id}")
 
@@ -1668,8 +1670,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     try:
         await bot.send_message(
             target_user_id,
-            f"Вам добавлено отсутствие #{abs_id} ({category}, {sd_disp}–{ed_disp}) от другого пользователя.\n"
-            f"Комментарий: {comment or '—'}\n(статус: pending)"
+            build_target_user_added_text(abs_id, category, sd, ed, comment)
         )
     except Exception:
         pass
@@ -1684,11 +1685,14 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id} "
-            f"ДЛЯ {get_user_fullname(target_user_id)}:\n"
-            f"{category} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            category,
+            sd,
+            ed,
+            comment,
+            target_fullname=get_user_fullname(target_user_id),
         )
         try:
             await _send_admin_request_with_overlaps(
