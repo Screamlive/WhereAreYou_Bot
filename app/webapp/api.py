@@ -16,6 +16,7 @@ from app.webapp.service import (
     get_overlaps_payload,
     get_webapp_profile,
 )
+from app.webapp.validation import parse_absence_id, parse_overlaps_query
 
 WEBAPP_STATIC_DIR = Path(__file__).resolve().parents[2] / "webapp_static"
 # Keep legacy logger name to preserve existing log filters/alerts.
@@ -39,34 +40,6 @@ def _http_error(exc: WebAppAccessError) -> web.HTTPException:
     if status_code == 404:
         return web.HTTPNotFound(text=json.dumps(payload), content_type="application/json")
     return web.HTTPForbidden(text=json.dumps(payload), content_type="application/json")
-
-
-def _parse_list_param(raw: str | None) -> list[str] | None:
-    if raw is None:
-        return None
-    values = [part.strip() for part in raw.split(",")]
-    return [value for value in values if value]
-
-
-def _parse_int_param(raw: str | None, name: str) -> int | None:
-    if raw is None or raw == "":
-        return None
-    if not raw.isdigit():
-        raise WebAppAccessError(f"Параметр {name} должен быть числом.", status_code=400)
-    return int(raw)
-
-
-def parse_overlaps_query(request: web.Request) -> dict:
-    return {
-        "scope_type": request.query.get("scope_type"),
-        "group_id": _parse_int_param(request.query.get("group_id"), "group_id"),
-        "year": _parse_int_param(request.query.get("year"), "year"),
-        "start_date": request.query.get("start_date"),
-        "end_date": request.query.get("end_date"),
-        "statuses": _parse_list_param(request.query.get("statuses")),
-        "categories": _parse_list_param(request.query.get("categories")),
-        "query": request.query.get("q"),
-    }
 
 
 async def handle_me(request: web.Request) -> web.Response:
@@ -109,10 +82,8 @@ async def handle_export_xlsx(request: web.Request) -> web.Response:
 async def handle_absence(request: web.Request) -> web.Response:
     try:
         user_id = webapp_auth.extract_user_id(request)
-        absence_id_raw = request.match_info["absence_id"]
-        if not absence_id_raw.isdigit():
-            raise WebAppAccessError("absence_id должен быть числом.", status_code=400)
-        payload = get_absence_details_payload(user_id, int(absence_id_raw))
+        absence_id = parse_absence_id(request.match_info["absence_id"])
+        payload = get_absence_details_payload(user_id, absence_id)
         return web.json_response(payload)
     except WebAppAccessError as exc:
         raise _http_error(exc) from exc
