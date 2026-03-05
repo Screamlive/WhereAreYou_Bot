@@ -169,20 +169,22 @@ def _extract_user_id(request: web.Request) -> int:
         if user_id_raw and user_id_raw.isdigit():
             return int(user_id_raw)
 
+    # Do not log raw Referer/query fragments to avoid leaking Telegram launch payloads.
+    referer_has_tg = "tgWebAppData=" in referer_raw
+    referer_has_init = "init_data=" in referer_raw or "initData=" in referer_raw
     logger.warning(
         (
             "WebApp auth context is missing: path=%s has_auth=%s has_init_header=%s "
-            "has_init_cookie=%s has_referer=%s referer_has_tg=%s referer_has_init=%s referer_len=%s referer=%s ua=%s"
+            "has_init_cookie=%s has_referer=%s referer_has_tg=%s referer_has_init=%s referer_len=%s ua=%s"
         ),
         request.path_qs,
         bool(auth_header),
         bool(request.headers.get("X-Telegram-Init-Data")),
         bool(request.cookies.get("tg_init_data")),
         bool(referer_raw),
-        "tgWebAppData=" in referer_raw,
-        "init_data=" in referer_raw or "initData=" in referer_raw,
+        referer_has_tg,
+        referer_has_init,
         len(referer_raw),
-        referer_raw[:200],
         (request.headers.get("User-Agent") or "")[:120],
     )
     raise WebAppAccessError("Не передан Telegram initData.", status_code=401)
@@ -288,8 +290,9 @@ def create_app() -> web.Application:
 
 def main() -> None:
     init_db()
+    host = os.getenv("WEBAPP_HOST", "127.0.0.1")
     port = int(os.getenv("WEBAPP_PORT", "8080"))
-    web.run_app(create_app(), host="0.0.0.0", port=port)
+    web.run_app(create_app(), host=host, port=port)
 
 
 if __name__ == "__main__":

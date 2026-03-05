@@ -6,6 +6,7 @@ import zipfile
 import hashlib
 import hmac
 from io import BytesIO
+from unittest.mock import patch
 from urllib.parse import quote
 
 from aiohttp import web
@@ -14,6 +15,7 @@ from aiohttp.test_utils import make_mocked_request
 import config
 import database
 import db_repo
+import webapp_api
 from webapp_api import (
     _verify_telegram_init_data,
     create_app,
@@ -149,6 +151,26 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         request = make_mocked_request("GET", "/webapp/v1/me")
         with self.assertRaises(web.HTTPUnauthorized):
             await handle_me(request)
+
+    async def test_me_requires_context_logs_without_sensitive_referer(self):
+        request = make_mocked_request(
+            "GET",
+            "/webapp/v1/me",
+            headers={
+                "Referer": "https://bot-test.justasite.cc/webapp?debug_token=secret_payload",
+                "User-Agent": "TestAgent/1.0",
+            },
+        )
+        with patch.object(webapp_api.logger, "warning") as mocked_warning:
+            with self.assertRaises(web.HTTPUnauthorized):
+                await handle_me(request)
+
+        self.assertTrue(mocked_warning.called)
+        args = mocked_warning.call_args[0]
+        joined = " ".join(str(part) for part in args)
+        self.assertNotIn("secret_payload", joined)
+        self.assertNotIn("debug_token=", joined)
+        self.assertIn("referer_has_tg", str(args[0]))
 
     async def test_me_without_initdata_when_dev_fallback_disabled(self):
         os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"

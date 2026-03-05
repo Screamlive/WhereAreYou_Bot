@@ -178,7 +178,7 @@
 
 Запуск backend:
 ```
-python webapp_api.py
+WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 ```
 
 Доступные endpoint'ы:
@@ -215,6 +215,13 @@ python webapp_api.py
   (например, `bot-test.example.com` и `bot.example.com`).
 - при Cloudflare Tunnel нельзя держать конфликтующие DNS-записи одного host
   (`A/AAAA/CNAME` одновременно).
+
+Минимальный security baseline для production:
+- `WEBAPP_ALLOW_DEV_FALLBACK=0`;
+- `WEBAPP_HOST=127.0.0.1` (backend доступен только локально);
+- внешний `:8080` закрыт;
+- включены security headers на edge-слое (Nginx/Cloudflare);
+- без `initData` API должен возвращать `401/403`.
 
 ## Сервисная рассылка (CLI)
 

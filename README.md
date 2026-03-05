@@ -77,7 +77,7 @@ pytest
 Запуск backend WebApp:
 ```
 source .venv/bin/activate
-python webapp_api.py
+WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 ```
 
 Открытие в браузере для локальной проверки (без Telegram):
@@ -108,7 +108,7 @@ sudo apt install -y nginx certbot python3-certbot-nginx
 2) Поднимите backend WebApp:
 ```
 source .venv/bin/activate
-WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
+WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
 ```
 
 3) Пример Nginx-конфига:
@@ -189,6 +189,27 @@ bot-test.example.com
 Важно:
 - для одного host в DNS не должно быть конфликтующих записей (A/AAAA/CNAME одновременно);
 - даже с tunnel доступ к данным защищается только backend-проверкой `initData`, не самим фактом HTTPS.
+
+## Security baseline перед прод-деплоем
+
+Обязательный минимум:
+- `WEBAPP_ALLOW_DEV_FALLBACK=0` в production;
+- `WEBAPP_HOST=127.0.0.1` (чтобы backend не слушал внешний интерфейс);
+- внешний доступ к `:8080` закрыт firewall/сетевой политикой;
+- TLS и `/setdomain` настроены;
+- бэкап БД создан и проверен.
+
+Быстрые проверки:
+```
+# 1) Проверить bind WebApp API (ожидается 127.0.0.1:8080)
+ss -lntp | rg 8080
+
+# 2) Проверить, что без initData API не отдает данные
+curl -i "https://bot-test.example.com/webapp/v1/me"
+
+# 3) Проверить security headers на edge
+curl -I "https://bot-test.example.com/webapp" | rg -i "content-security-policy|x-frame-options|x-content-type-options|referrer-policy|permissions-policy"
+```
 
 Доступный функционал:
 - scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);
