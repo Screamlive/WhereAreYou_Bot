@@ -224,6 +224,11 @@ curl -I "https://bot-test.example.com/webapp" | rg -i "content-security-policy|x
 for i in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}\n" "https://bot-test.example.com/webapp/v1/me"; done | sort | uniq -c
 ```
 
+Security gate перед релизом:
+```
+./scripts/security_gate.sh
+```
+
 Доступный функционал:
 - scope: `Глобально / Группа / Суперадмины` (в зависимости от роли);
 - период: `Текущий год / Текущий месяц / Следующие 90 дней`;

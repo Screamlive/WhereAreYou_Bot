@@ -234,6 +234,11 @@ WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 Эти параметры можно задавать как в `config.py`, так и через env-переменные
 (env имеет приоритет).
 
+Перед релизом запускается security gate:
+```
+./scripts/security_gate.sh
+```
+
 ## Сервисная рассылка (CLI)
 
 Скрипт `broadcast.py` используется для сервисных объявлений через бот

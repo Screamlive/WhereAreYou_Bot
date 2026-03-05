@@ -15,7 +15,9 @@
 - [x] S3: auth hardening реализован (флаг compat-каналов, удален persistent initData, rate limit).
 - [x] S3: добавлены unit-тесты для strict-режима compat и rate limit.
 - [x] S3: финальный ручной smoke rate limit на edge выполнен (`401`/`429` подтверждены).
-- [ ] S4: полный security gate для релиза.
+- [x] S4: добавлен локальный security gate-скрипт (`./scripts/security_gate.sh`).
+- [x] S4: добавлены frontend security-тесты на отсутствие хранения/утечек initData.
+- [ ] S4: CI release gate (автоматический блок merge/deploy при провале security gate).
 
 ## 1) Цель
 
@@ -191,6 +193,7 @@ Telegram не дает “железного” transport-level маркера, 
 1. Unit:
 - проверка auth веток (`initData` valid/invalid/missing/expired);
 - ACL по ролям и scope.
+- проверка frontend-политики передачи `initData` (без query/localStorage/cookie).
 
 2. Integration:
 - `curl` сценарии через Nginx/Tunnel;
@@ -212,6 +215,7 @@ Telegram не дает “железного” transport-level маркера, 
 - [ ] Настроен и проверен rate limit (`429` при burst на `/webapp/v1/*`).
 - [ ] Настроены backup и проверено восстановление.
 - [ ] Пройдены security unit/integration тесты.
+- [ ] Запущен `./scripts/security_gate.sh` и получен `OK`.
 - [ ] Проверены SSH/firewall/fail2ban/обновления.
 
 ## 9) Out of scope
