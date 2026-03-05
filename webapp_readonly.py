@@ -1,16 +1,20 @@
 import datetime
 
-from db_repo import (
+from app.repositories.absences_repo import (
     get_absence_with_user,
+    list_absences_for_period,
+)
+from app.repositories.groups_repo import (
     get_group_name,
+    list_all_groups,
+)
+from app.repositories.users_repo import (
     get_last_group_id,
     get_user_group_ids,
     get_user_groups,
     get_user_name_and_username,
     is_user_admin,
     is_user_approved,
-    list_absences_for_period,
-    list_all_groups,
     user_exists_in_db,
 )
 

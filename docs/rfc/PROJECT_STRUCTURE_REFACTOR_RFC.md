@@ -12,9 +12,10 @@
 - [x] R2: `notifications.py` переведен в thin-wrapper над `app.entrypoints.notifications_main`.
 - [x] R3: добавлены фасады репозиториев `app/repositories/{users,groups,absences}_repo.py`.
 - [x] R3: `notifications.py` и `broadcast.py` переведены на фасады репозиториев без изменения поведения.
+- [x] R3: `core.py` и `webapp_readonly.py` переведены на фасады репозиториев без изменения поведения.
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
 - [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
-- [ ] R3: продолжить перенос остальных потребителей `db_repo` на фасады.
+- [ ] R3: продолжить перенос `handlers/*` и прочих модулей с прямыми импортами `db_repo`.
 
 ## 1) Проблема
 
