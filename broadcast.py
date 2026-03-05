@@ -4,15 +4,9 @@ import sys
 
 from aiogram import Bot
 
+from app.repositories.groups_repo import get_group_members, get_group_name, list_all_groups
+from app.repositories.users_repo import get_admins, get_all_users, get_approved_users
 from database import init_db
-from db_repo import (
-    get_admins,
-    get_all_users,
-    get_approved_users,
-    get_group_members,
-    get_group_name,
-    list_all_groups,
-)
 from settings import TOKEN
 
 
