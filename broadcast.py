@@ -4,7 +4,6 @@ import sys
 
 from aiogram import Bot
 
-from config import TOKEN
 from database import init_db
 from db_repo import (
     get_admins,
@@ -14,6 +13,7 @@ from db_repo import (
     get_group_name,
     list_all_groups,
 )
+from settings import TOKEN
 
 
 def _parse_group_audience(audience: str) -> int | None:

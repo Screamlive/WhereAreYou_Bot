@@ -3,7 +3,6 @@ from collections import defaultdict
 
 from aiogram import Bot
 
-from config import TOKEN
 from database import init_db
 from db_repo import (
     get_admins,
@@ -17,6 +16,7 @@ from db_repo import (
     list_pending_group_requests,
     list_pending_user_ids,
 )
+from settings import TOKEN
 
 
 def build_group_admin_notifications() -> dict[int, str]:

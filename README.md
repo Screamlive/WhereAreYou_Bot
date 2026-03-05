@@ -12,7 +12,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2) Создайте конфиг и укажите токен:
+2) Для локальной разработки создайте `config.py`:
 ```
 cp config_example.py config.py
 ```
@@ -26,13 +26,23 @@ python bot.py
 
 ## Конфигурация
 
-Файл `config.py`:
+Локальный файл `config.py`:
 - `TOKEN` — токен бота от BotFather.
 - `DB_NAME` — имя файла SQLite.
 - `WEBAPP_URL` — публичный HTTPS URL WebApp (например, `https://example.com/webapp`).
+- `WEBAPP_*` — параметры WebApp API и rate limit.
 
 Важно: `database.py` использует имя базы по умолчанию `bot_database.db`.
 Если меняете `DB_NAME`, синхронизируйте значение в `database.py`.
+
+Production best practice:
+- секреты (`TOKEN`) задаются через `EnvironmentFile` (systemd), а не через `config.py`;
+- не-секретные параметры (`WEBAPP_*`, `DB_NAME`) хранятся в `config.py`;
+- приоритет источников: `env` > `config.py`;
+- `config.py` не хранится в git и используется как локальный fallback.
+
+Пример файлов:
+- `deploy/env/telegram_bot.env.example`
 
 ## Первичный суперадмин
 
@@ -130,16 +140,11 @@ sudo systemctl reload nginx
 sudo certbot --nginx -d bot-test.example.com
 ```
 
-6) Пропишите URL WebApp для бота:
+6) Задайте production-параметры через EnvironmentFile:
 ```
-# config.py
-WEBAPP_URL = "https://bot-test.example.com/webapp"
-WEBAPP_ALLOW_DEV_FALLBACK = False
-WEBAPP_ALLOW_INITDATA_COMPAT = False
-WEBAPP_HOST = "127.0.0.1"
-WEBAPP_PORT = 8080
-WEBAPP_RATE_LIMIT_MAX_REQUESTS = 120
-WEBAPP_RATE_LIMIT_WINDOW_SEC = 60
+sudo install -d -m 755 /etc/telegram_bot
+sudo install -m 600 -o <user> -g <user> deploy/env/telegram_bot.env.example /etc/telegram_bot/telegram_bot.env
+# отредактируйте TOKEN (при необходимости DB_NAME можно оставить в config.py)
 ```
 
 7) В BotFather для соответствующего бота:
@@ -197,6 +202,11 @@ bot-test.example.com
 Важно:
 - для одного host в DNS не должно быть конфликтующих записей (A/AAAA/CNAME одновременно);
 - даже с tunnel доступ к данным защищается только backend-проверкой `initData`, не самим фактом HTTPS.
+
+Systemd-шаблоны для production:
+- `deploy/systemd/telegram_bot.service.example`
+- `deploy/systemd/telegram_webapp.service.example`
+- оба используют `EnvironmentFile=/etc/telegram_bot/telegram_bot.env`.
 
 ## Security baseline перед прод-деплоем
 
@@ -333,5 +343,7 @@ python broadcast.py --audience approved --changelog-latest
 - `keyboards.py` — клавиатуры.
 - `texts.py` / `utils.py` — общие тексты и утилиты.
 - `tests/` — тесты.
-- `config.py` — конфиг с токеном (не хранится в git).
+- `settings.py` — централизованное чтение runtime-настроек и секретов.
+- `config.py` — локальный fallback-конфиг (не хранится в git).
 - `config_example.py` — пример конфига.
+- `deploy/env/telegram_bot.env.example` — шаблон production EnvironmentFile (секреты).

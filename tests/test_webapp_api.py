@@ -15,6 +15,7 @@ from aiohttp.test_utils import make_mocked_request
 import config
 import database
 import db_repo
+import settings
 import webapp_api
 from webapp_api import (
     _verify_telegram_init_data,
@@ -96,7 +97,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
             "user": user_json,
         }
         data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(pairs.items()))
-        secret = hmac.new(b"WebAppData", config.TOKEN.encode(), hashlib.sha256).digest()
+        secret = hmac.new(b"WebAppData", settings.TOKEN.encode(), hashlib.sha256).digest()
         digest = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
         parts = [f"{key}={quote(value, safe='')}" for key, value in pairs.items()]
         parts.append(f"hash={digest}")

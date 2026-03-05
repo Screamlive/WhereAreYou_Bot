@@ -12,6 +12,8 @@ jobs:
   security-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TOKEN: "123456:SECURITY_GATE_DUMMY_TOKEN"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Prepare local config module for tests
+        run: |
+          cp config_example.py config.py
+
       - name: Run security gate
         run: ./scripts/security_gate.sh
-

@@ -4,9 +4,9 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import TOKEN
 from database import init_db
 from handlers import admin, groups, absences, menus
+from settings import TOKEN
 
 logging.basicConfig(level=logging.DEBUG)
 

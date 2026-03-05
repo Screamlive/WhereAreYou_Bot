@@ -11,8 +11,8 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from config import TOKEN
 from database import init_db
+from settings import TOKEN
 from webapp_export import build_overlaps_export_filename, build_overlaps_xlsx
 from webapp_readonly import (
     WebAppAccessError,

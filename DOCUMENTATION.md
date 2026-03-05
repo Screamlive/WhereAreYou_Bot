@@ -234,6 +234,20 @@ WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 Эти параметры можно задавать как в `config.py`, так и через env-переменные
 (env имеет приоритет).
 
+Рекомендуемый production-подход:
+- секреты (`TOKEN`) задаются через `EnvironmentFile` в systemd;
+- не-секретные runtime-настройки (`WEBAPP_*`, `DB_NAME`) остаются в `config.py`;
+- `config.py` используется как локальный fallback для разработки;
+- секреты (`TOKEN`) не хранятся в репозитории.
+
+Шаблоны EnvironmentFile:
+- `deploy/env/telegram_bot.env.example`
+
+Systemd-шаблоны:
+- `deploy/systemd/telegram_bot.service.example`
+- `deploy/systemd/telegram_webapp.service.example`
+- `deploy/systemd-user/telegram_bot_notify.service`
+
 Перед релизом запускается security gate:
 ```
 ./scripts/security_gate.sh

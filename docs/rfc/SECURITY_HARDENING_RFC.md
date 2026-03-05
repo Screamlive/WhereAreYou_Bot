@@ -18,6 +18,8 @@
 - [x] S4: добавлен локальный security gate-скрипт (`./scripts/security_gate.sh`).
 - [x] S4: добавлены frontend security-тесты на отсутствие хранения/утечек initData.
 - [x] S4: CI workflow для security gate добавлен (`.github/workflows/security-gate.yml`).
+- [x] S4: добавлены шаблоны `EnvironmentFile` и systemd-шаблоны для секретов вне git.
+- [x] S4: секрет `TOKEN` переведен на централизованное чтение через `settings.py` (env-first, fail-fast).
 - [ ] S4: branch protection на `main` с обязательным check `security-gate`.
 
 ## 1) Цель
@@ -131,9 +133,10 @@ Telegram не дает “железного” transport-level маркера, 
 2. Секреты (`TOKEN` и т.п.) не хранятся в git и `config.py`:
    - только через `systemd EnvironmentFile` (например, `/etc/telegram_bot/telegram_bot.env`, права `600`)
      или внешний secret manager.
-3. Переменные окружения используются как override осознанно и документированно.
-4. Fail-fast: при отсутствии обязательных параметров production-сервис не стартует.
-5. `.env` допустим только для локальной разработки, не для production.
+3. Не-секретные runtime-параметры (`WEBAPP_*`, `DB_NAME`) допускается хранить в `config.py`.
+4. Переменные окружения используются как override осознанно и документированно.
+5. Fail-fast: при отсутствии обязательных параметров production-сервис не стартует.
+6. `.env` допустим только для локальной разработки, не для production.
 
 ## 6) План внедрения (итерации)
 
