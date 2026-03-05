@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from aiohttp import web
 
 from settings import TOKEN
-from webapp_readonly import WebAppAccessError
+from app.webapp.service import WebAppAccessError
 
 try:
     from config import WEBAPP_ALLOW_DEV_FALLBACK as CONFIG_WEBAPP_ALLOW_DEV_FALLBACK
@@ -167,4 +167,3 @@ def extract_user_id(request: web.Request) -> int:
         (request.headers.get("User-Agent") or "")[:120],
     )
     raise WebAppAccessError("Не передан Telegram initData.", status_code=401)
-

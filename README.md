@@ -335,15 +335,21 @@ python broadcast.py --audience approved --changelog-latest
 
 ## Структура проекта
 
-- `bot.py` — точка входа, регистрация роутеров.
-- `handlers/` — хендлеры по доменам (админ, группы, отсутствия, меню).
-- `db_repo.py` — слой работы с БД.
-- `database.py` — создание таблиц SQLite.
-- `core.py` — общие проверки ролей и меню.
-- `keyboards.py` — клавиатуры.
-- `texts.py` / `utils.py` — общие тексты и утилиты.
+- `app/entrypoints/` — реальные точки входа приложений (`bot_main.py`, `webapp_main.py`, `notifications_main.py`).
+- `app/config/settings.py` — чтение runtime-настроек и секретов.
+- `app/db/` + `app/repositories/` — SQL-слой и фасады репозиториев.
+- `app/use_cases/` — бизнес-сценарии (отсутствия, модерация, пересечения, экспорты).
+- `app/webapp/` — WebApp-слой:
+  - `api.py` (HTTP handlers/factory),
+  - `auth.py` (initData/auth),
+  - `http.py` (security headers/rate-limit middleware),
+  - `validation.py` (валидация query/path),
+  - `service.py` (read-only ACL/данные),
+  - `export.py` (XLSX).
+- `handlers/` — Telegram-хендлеры по доменам (админ, группы, отсутствия, меню).
+- `core.py`, `keyboards.py`, `texts.py`, `utils.py` — общий слой Telegram-бота.
+- `database.py` — инициализация схемы SQLite.
 - `tests/` — тесты.
-- `settings.py` — централизованное чтение runtime-настроек и секретов.
-- `config.py` — локальный fallback-конфиг (не хранится в git).
-- `config_example.py` — пример конфига.
+- `bot.py`, `webapp_api.py`, `webapp_readonly.py`, `webapp_export.py`, `settings.py`, `db_repo.py` — совместимые shim-модули.
+- `config.py` — локальный fallback-конфиг (не хранится в git), `config_example.py` — пример.
 - `deploy/env/telegram_bot.env.example` — шаблон production EnvironmentFile (секреты).

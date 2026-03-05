@@ -294,6 +294,30 @@ python broadcast.py --audience approved --changelog-latest
 - Реализованный RFC по read-only WebApp перенесен в архив: `docs/archive/WEBAPP_READONLY_RFC.md`.
 - Новые этапы проектирования (безопасность, операционная CLI-панель) ведутся в `docs/rfc/`.
 
+## Карта модулей (актуальная)
+
+Слой приложения:
+- `app/entrypoints/` — запуск приложений (`bot_main.py`, `webapp_main.py`, `notifications_main.py`);
+- `app/config/settings.py` — чтение env/config параметров;
+- `app/db/` и `app/repositories/` — SQL-слой и фасады репозиториев;
+- `app/use_cases/` — бизнес-логика (сценарии отсутствий, модерация, пересечения, отчеты/экспорты);
+- `app/webapp/`:
+  - `api.py` — HTTP endpoint'ы и сборка `aiohttp` app;
+  - `auth.py` — валидация Telegram initData и auth-context;
+  - `http.py` — middleware безопасности и rate-limit;
+  - `validation.py` — парсинг/валидация query/path параметров;
+  - `service.py` — read-only ACL и формирование payload;
+  - `export.py` — формирование XLSX.
+
+Telegram-слой:
+- `handlers/` — обработчики команд/кнопок;
+- `core.py`, `keyboards.py`, `texts.py`, `utils.py` — общий доменный и UI-слой.
+
+Совместимость (shim-модули на корне):
+- `bot.py`, `webapp_api.py`, `webapp_readonly.py`, `webapp_export.py`,
+  `settings.py`, `db_repo.py`.
+- Эти файлы сохранены для обратной совместимости импорта/запуска; новая реализация находится в `app/*`.
+
 ## База данных
 
 SQLite файл по умолчанию: `bot_database.db`.
