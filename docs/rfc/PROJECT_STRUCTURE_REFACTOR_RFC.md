@@ -22,6 +22,7 @@
 - [x] R4: логика расчета пересечений и получателей уведомлений вынесена из `handlers/absences.py` в `app/use_cases/absence_overlaps.py` (с переходными alias для совместимости тестов).
 - [x] R4: логика формирования текстов заявок на отсутствие вынесена из `handlers/absences.py` в `app/use_cases/absence_requests.py` + добавлены unit-тесты use-case слоя.
 - [x] R4: логика модерации заявок/удалений/изменений вынесена из `handlers/absences.py` в `app/use_cases/absence_moderation.py` + добавлены unit-тесты use-case слоя.
+- [x] R4: логика формирования списков/представлений отсутствий вынесена из `handlers/absences.py` в `app/use_cases/absence_views.py` + добавлены unit-тесты use-case слоя.
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
 - [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
 - [x] R3: SQL-реализация перенесена в тематические модули (`users`, `groups`, `absences`, `logs`).

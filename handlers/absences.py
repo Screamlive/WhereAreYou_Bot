@@ -61,6 +61,13 @@ from app.use_cases.absence_requests import (
     build_user_request_submitted_text,
     normalize_comment,
 )
+from app.use_cases.absence_views import (
+    build_admin_delete_absences_report,
+    build_admin_edit_absence_label,
+    build_admin_edit_current_text,
+    build_my_absences_report,
+    build_user_absences_report,
+)
 from app.repositories.users_repo import (
     get_approved_users,
     get_user_fullname,
@@ -419,13 +426,8 @@ async def show_my_absences(message: types.Message):
         await message.answer("У вас нет заявок на отсутствие.")
         return
 
-    lines = []
     kb_rows = []
-    for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        line = f"#{abs_id} — {cat}, {sd_disp}–{ed_disp}, статус={st}, коммент: {cmnt or '—'}"
-        lines.append(line)
+    for (abs_id, _cat, _sd, _ed, _cmnt, st) in rows:
         if st == "approved":
             kb_rows.append([
                 InlineKeyboardButton(
@@ -438,7 +440,7 @@ async def show_my_absences(message: types.Message):
                 )
             ])
 
-    text_report = "Ваши заявки:\n" + "\n".join(lines)
+    text_report = build_my_absences_report(rows)
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
 
     await message.answer(text_report, reply_markup=inline_kb)
@@ -933,11 +935,7 @@ async def cb_show_absences(cb: CallbackQuery):
         await cb.answer()
         return
 
-    text_report = f"Отсутствия {user_disp}:\n"
-    for (_abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        text_report += f"- {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
+    text_report = build_user_absences_report(user_disp, rows)
 
     await cb.message.answer(text_report)
     await cb.answer()
@@ -1013,12 +1011,9 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
         await cb.answer()
         return
 
-    text_rep = f"Отсутствия {user_disp}:\n"
+    text_rep = build_admin_delete_absences_report(user_disp, rows)
     kb_rows = []
-    for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        text_rep += f"#{abs_id} {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
+    for (abs_id, _cat, _sd, _ed, _cmnt, _st) in rows:
         kb_rows.append([InlineKeyboardButton(
             text=f"Удалить #{abs_id}",
             callback_data=f"adm_del_abs:{abs_id}"
@@ -1168,10 +1163,8 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
 
     await state.update_data(target_user_id=user_id)
     kb_rows = []
-    for abs_id, cat, sd, ed, cmnt, st in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        label = f"#{abs_id} {cat} {sd_disp}–{ed_disp} [{st}]"
+    for abs_id, cat, sd, ed, _cmnt, st in rows:
+        label = build_admin_edit_absence_label(abs_id, cat, sd, ed, st)
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_abs:{abs_id}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await cb.message.answer("Выберите заявку для изменения:", reply_markup=inline_kb)
@@ -1202,8 +1195,6 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
         return
 
     target_user_id, cat, sd, ed, cmnt, st = row
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(target_user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
@@ -1220,11 +1211,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="Другое", callback_data="adm_edit_cat_other"),
         ]
     ])
-    await cb.message.answer(
-        f"Текущие данные: {cat} {sd_disp}–{ed_disp}, коммент: {cmnt or '—'}, статус={st}\n"
-        f"Выберите новую категорию (можно выбрать ту же):",
-        reply_markup=kb
-    )
+    await cb.message.answer(build_admin_edit_current_text(cat, sd, ed, cmnt, st), reply_markup=kb)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_category)
     await cb.answer()
 
