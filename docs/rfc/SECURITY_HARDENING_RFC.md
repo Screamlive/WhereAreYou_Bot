@@ -11,8 +11,10 @@
 - [x] S2: security headers добавлены в `webapp_api.py` и в Nginx-шаблон.
 - [x] S2: ограничения HTTP-методов для WebApp добавлены в Nginx-шаблон.
 - [x] S2: добавлен unit-тест на обязательные security headers.
-- [ ] S2: финальная ручная проверка headers на реальном edge (Nginx/Tunnel) перед прод-деплоем.
-- [ ] S3: auth hardening (минимизация каналов `initData`, rate limit).
+- [x] S2: финальная ручная проверка headers на реальном edge (Nginx/Tunnel).
+- [x] S3: auth hardening реализован (флаг compat-каналов, удален persistent initData, rate limit).
+- [x] S3: добавлены unit-тесты для strict-режима compat и rate limit.
+- [x] S3: финальный ручной smoke rate limit на edge выполнен (`401`/`429` подтверждены).
 - [ ] S4: полный security gate для релиза.
 
 ## 1) Цель
@@ -61,8 +63,8 @@ Telegram не дает “железного” transport-level маркера, 
 
 Да, текущие риски:
 - возможная утечка чувствительных параметров через чрезмерно подробный debug-лог;
-- обходные механики desktop-совместимости (query/cookie/localStorage для `initData`) расширяют поверхность утечки;
-- отсутствие rate limiting на `/webapp/v1/*`;
+- compat-каналы `initData` (query/cookie/referer) расширяют поверхность утечки, если не отключены;
+- двойной источник конфигурации повышает риск дрейфа настроек между средами;
 - отсутствие обязательного набора security headers;
 - риск внешнего доступа к backend-порту при неправильном bind/firewall.
 
@@ -79,11 +81,9 @@ Telegram не дает “железного” transport-level маркера, 
 
 ### 4.5 Как у нас с security-тестами?
 
-Базовые тесты есть (ACL/auth), но не хватает:
-- тестов на санитизацию логов;
-- тестов на transport-политику (prod без fallback);
-- тестов на заголовки безопасности;
-- интеграционных тестов с reverse proxy / tunnel профилями.
+Базовые тесты есть (ACL/auth/sanitization/headers/rate limit), но не хватает:
+- интеграционных тестов с reverse proxy / tunnel профилями;
+- автоматизированного release gate в CI.
 
 ## 5) Целевой security baseline (production)
 
@@ -119,6 +119,18 @@ Telegram не дает “железного” transport-level маркера, 
 2. Лог-ротация.
 3. Мониторинг ошибок `401/403/5xx` и аномалий запросов.
 4. Обязательный backup + restore drill.
+
+## 5.5 Configuration & Secrets
+
+1. Единая модель конфигурации:
+   - в коде единая точка чтения настроек (`settings`/`config`);
+   - в production используется один основной канал поставки значений.
+2. Секреты (`TOKEN` и т.п.) не хранятся в git и `config.py`:
+   - только через `systemd EnvironmentFile` (например, `/etc/telegram_bot/telegram_bot.env`, права `600`)
+     или внешний secret manager.
+3. Переменные окружения используются как override осознанно и документированно.
+4. Fail-fast: при отсутствии обязательных параметров production-сервис не стартует.
+5. `.env` допустим только для локальной разработки, не для production.
 
 ## 6) План внедрения (итерации)
 
@@ -156,7 +168,7 @@ Telegram не дает “железного” transport-level маркера, 
 - Нагрузочный smoke не приводит к деградации.
 - Без `initData` данные недоступны стабильно во всех роутингах.
 
-Текущий статус: не начато.
+Текущий статус: реализовано в коде и unit-тестах, требуется финальный edge smoke (429).
 
 ### Итерация S4 — Security tests & release gate
 
@@ -166,6 +178,7 @@ Telegram не дает “железного” transport-level маркера, 
   - headers безопасности,
   - ACL regression.
 - Ввести release gate: деплой без прохождения security-набора запрещен.
+- Зафиксировать и проверить policy конфигурации/секретов (single source of truth + fail-fast).
 
 Критерии приемки:
 - Security test suite green.
@@ -191,8 +204,12 @@ Telegram не дает “железного” transport-level маркера, 
 ## 8) Чеклист релиза (security)
 
 - [ ] `WEBAPP_ALLOW_DEV_FALLBACK=0` в prod.
+- [ ] `WEBAPP_ALLOW_INITDATA_COMPAT=0` в prod.
+- [ ] `TOKEN` и прочие секреты не хранятся в репозитории.
+- [ ] Production запускается через `EnvironmentFile` с ограниченными правами доступа (`600`).
 - [ ] Нет debug-логов с `Referer`/query/initData.
 - [ ] `webapp_api.py` не торчит наружу на `8080`.
+- [ ] Настроен и проверен rate limit (`429` при burst на `/webapp/v1/*`).
 - [ ] Настроены backup и проверено восстановление.
 - [ ] Пройдены security unit/integration тесты.
 - [ ] Проверены SSH/firewall/fail2ban/обновления.

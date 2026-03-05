@@ -186,7 +186,6 @@ async function apiGet(path, query = {}) {
   if (state.initData) {
     headers["X-Telegram-Init-Data"] = state.initData;
     headers.Authorization = `tma ${state.initData}`;
-    url.searchParams.set("init_data", state.initData);
   } else if (state.devUserId) {
     headers["X-Telegram-User-Id"] = state.devUserId;
   }
@@ -206,11 +205,6 @@ function persistInitData(value, source) {
   }
   state.initData = normalized;
   state.initDataSource = source || state.initDataSource || "unknown";
-  const encoded = encodeURIComponent(state.initData);
-  document.cookie = `tg_init_data=${encoded}; Path=/; SameSite=Lax; Secure`;
-  if (window.localStorage) {
-    window.localStorage.setItem("tg_init_data", state.initData);
-  }
   return true;
 }
 
@@ -226,7 +220,6 @@ async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
   if (state.initData) {
     headers["X-Telegram-Init-Data"] = state.initData;
     headers.Authorization = `tma ${state.initData}`;
-    url.searchParams.set("init_data", state.initData);
   } else if (state.devUserId) {
     headers["X-Telegram-User-Id"] = state.devUserId;
   }
@@ -294,12 +287,6 @@ function detectTelegramContext() {
     }
   }
 
-  if (!state.initData) {
-    const savedInitData = window.localStorage ? window.localStorage.getItem("tg_init_data") || "" : "";
-    if (savedInitData) {
-      persistInitData(savedInitData, "local_storage");
-    }
-  }
 }
 
 async function waitForTelegramInitData(timeoutMs = 2500) {

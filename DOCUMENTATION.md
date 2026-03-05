@@ -201,6 +201,9 @@ WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 - production-режим: только проверка Telegram `initData`;
 - dev fallback по заголовку `X-Telegram-User-Id` работает только при
   `WEBAPP_ALLOW_DEV_FALLBACK=1` (локальная разработка);
+- каналы совместимости `initData` (query/cookie/referer) можно отключить
+  через `WEBAPP_ALLOW_INITDATA_COMPAT=0` (рекомендуется для production);
+- на `/webapp/v1/*` включен rate limit (по IP);
 - публичный URL WebApp не должен отдавать данные без валидного `initData`.
 - для части Telegram Desktop клиентов reply-кнопка `web_app` менее стабильна,
   поэтому рекомендуется запуск через inline-кнопку `web_app`.
@@ -218,10 +221,18 @@ WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 
 Минимальный security baseline для production:
 - `WEBAPP_ALLOW_DEV_FALLBACK=0`;
+- `WEBAPP_ALLOW_INITDATA_COMPAT=0`;
 - `WEBAPP_HOST=127.0.0.1` (backend доступен только локально);
+- задан rate limit:
+  - `WEBAPP_RATE_LIMIT_MAX_REQUESTS` (по умолчанию `120`);
+  - `WEBAPP_RATE_LIMIT_WINDOW_SEC` (по умолчанию `60`);
 - внешний `:8080` закрыт;
 - включены security headers на edge-слое (Nginx/Cloudflare);
-- без `initData` API должен возвращать `401/403`.
+- без `initData` API должен возвращать `401/403`;
+- при burst-нагрузке API должен возвращать `429`.
+
+Эти параметры можно задавать как в `config.py`, так и через env-переменные
+(env имеет приоритет).
 
 ## Сервисная рассылка (CLI)
 

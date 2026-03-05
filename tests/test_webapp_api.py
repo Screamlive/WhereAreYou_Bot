@@ -30,7 +30,12 @@ from webapp_api import (
 class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.prev_dev_fallback = os.environ.get("WEBAPP_ALLOW_DEV_FALLBACK")
+        self.prev_initdata_compat = os.environ.get("WEBAPP_ALLOW_INITDATA_COMPAT")
+        self.prev_rate_limit_max = os.environ.get("WEBAPP_RATE_LIMIT_MAX_REQUESTS")
+        self.prev_rate_limit_window = os.environ.get("WEBAPP_RATE_LIMIT_WINDOW_SEC")
         os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "1"
+        os.environ["WEBAPP_ALLOW_INITDATA_COMPAT"] = "1"
+        webapp_api._clear_rate_limiter_state()
 
         fd, path = tempfile.mkstemp(prefix="bot_webapp_api_", suffix=".db")
         os.close(fd)
@@ -55,6 +60,19 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
             os.environ.pop("WEBAPP_ALLOW_DEV_FALLBACK", None)
         else:
             os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = self.prev_dev_fallback
+        if self.prev_initdata_compat is None:
+            os.environ.pop("WEBAPP_ALLOW_INITDATA_COMPAT", None)
+        else:
+            os.environ["WEBAPP_ALLOW_INITDATA_COMPAT"] = self.prev_initdata_compat
+        if self.prev_rate_limit_max is None:
+            os.environ.pop("WEBAPP_RATE_LIMIT_MAX_REQUESTS", None)
+        else:
+            os.environ["WEBAPP_RATE_LIMIT_MAX_REQUESTS"] = self.prev_rate_limit_max
+        if self.prev_rate_limit_window is None:
+            os.environ.pop("WEBAPP_RATE_LIMIT_WINDOW_SEC", None)
+        else:
+            os.environ["WEBAPP_RATE_LIMIT_WINDOW_SEC"] = self.prev_rate_limit_window
+        webapp_api._clear_rate_limiter_state()
 
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
@@ -142,6 +160,24 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.text)
         self.assertEqual(payload["user"]["id"], 9001)
 
+    async def test_me_rejects_compat_channels_when_disabled(self):
+        os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "0"
+        os.environ["WEBAPP_ALLOW_INITDATA_COMPAT"] = "0"
+        init_data = self._build_valid_init_data()
+        request = make_mocked_request(
+            "GET",
+            f"/webapp/v1/me?tgWebAppData={quote(init_data, safe='')}",
+        )
+        with patch.object(webapp_api.logger, "warning") as mocked_warning:
+            with self.assertRaises(web.HTTPUnauthorized):
+                await handle_me(request)
+
+        self.assertTrue(mocked_warning.called)
+        args = mocked_warning.call_args[0]
+        joined = " ".join(str(part) for part in args)
+        self.assertNotIn("tgWebAppData", joined)
+        self.assertNotIn("hash=", joined)
+
     async def test_index_is_file_response(self):
         request = make_mocked_request("GET", "/webapp")
         response = await handle_webapp_index(request)
@@ -214,6 +250,28 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(api_resp.status, 401)
         self.assertIn("Content-Security-Policy", api_resp.headers)
         self.assertEqual(api_resp.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
+
+    async def test_rate_limit_middleware_blocks_burst_requests(self):
+        os.environ["WEBAPP_RATE_LIMIT_MAX_REQUESTS"] = "2"
+        os.environ["WEBAPP_RATE_LIMIT_WINDOW_SEC"] = "60"
+        webapp_api._clear_rate_limiter_state()
+
+        async def ok_handler(_request):
+            return web.Response(text="ok")
+
+        req_1 = make_mocked_request("GET", "/webapp/v1/me", headers={"X-Real-IP": "1.2.3.4"})
+        req_2 = make_mocked_request("GET", "/webapp/v1/me", headers={"X-Real-IP": "1.2.3.4"})
+        req_3 = make_mocked_request("GET", "/webapp/v1/me", headers={"X-Real-IP": "1.2.3.4"})
+
+        resp_1 = await webapp_api.rate_limit_middleware(req_1, ok_handler)
+        resp_2 = await webapp_api.rate_limit_middleware(req_2, ok_handler)
+        self.assertEqual(resp_1.status, 200)
+        self.assertEqual(resp_2.status, 200)
+
+        with self.assertRaises(web.HTTPTooManyRequests) as cm:
+            await webapp_api.rate_limit_middleware(req_3, ok_handler)
+        retry_after = int(cm.exception.headers.get("Retry-After", "0"))
+        self.assertGreaterEqual(retry_after, 1)
 
     async def test_overlaps_with_group_scope(self):
         request = make_mocked_request(

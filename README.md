@@ -88,7 +88,10 @@ curl -H "X-Telegram-User-Id: <telegram_id>" "http://127.0.0.1:8080/webapp/v1/me"
 
 Важно по безопасности:
 - для production используется только Telegram `initData` (dev fallback выключен по умолчанию);
+- каналы совместимости `initData` (query/cookie/referer) в production лучше отключать:
+  `WEBAPP_ALLOW_INITDATA_COMPAT=0`;
 - URL WebApp публичный, но запросы без валидного `initData` получают `401/403`;
+- на `/webapp/v1/*` действует rate limit (по IP);
 - для Telegram WebApp нужен HTTPS-домен и настройка домена через BotFather (`/setdomain`).
 
 ## Варианты публикации WebApp (production)
@@ -108,7 +111,7 @@ sudo apt install -y nginx certbot python3-certbot-nginx
 2) Поднимите backend WebApp:
 ```
 source .venv/bin/activate
-WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
+WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 WEBAPP_ALLOW_INITDATA_COMPAT=0 python webapp_api.py
 ```
 
 3) Пример Nginx-конфига:
@@ -132,6 +135,11 @@ sudo certbot --nginx -d bot-test.example.com
 # config.py
 WEBAPP_URL = "https://bot-test.example.com/webapp"
 WEBAPP_ALLOW_DEV_FALLBACK = False
+WEBAPP_ALLOW_INITDATA_COMPAT = False
+WEBAPP_HOST = "127.0.0.1"
+WEBAPP_PORT = 8080
+WEBAPP_RATE_LIMIT_MAX_REQUESTS = 120
+WEBAPP_RATE_LIMIT_WINDOW_SEC = 60
 ```
 
 7) В BotFather для соответствующего бота:
@@ -153,7 +161,7 @@ bot-test.example.com
 1) Поднимите backend WebApp локально:
 ```
 source .venv/bin/activate
-WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 python webapp_api.py
+WEBAPP_PORT=8080 WEBAPP_ALLOW_DEV_FALLBACK=0 WEBAPP_ALLOW_INITDATA_COMPAT=0 python webapp_api.py
 ```
 
 2) Настройте Cloudflare Tunnel:
@@ -194,7 +202,9 @@ bot-test.example.com
 
 Обязательный минимум:
 - `WEBAPP_ALLOW_DEV_FALLBACK=0` в production;
+- `WEBAPP_ALLOW_INITDATA_COMPAT=0` в production;
 - `WEBAPP_HOST=127.0.0.1` (чтобы backend не слушал внешний интерфейс);
+- настроен rate limit (`WEBAPP_RATE_LIMIT_MAX_REQUESTS`, `WEBAPP_RATE_LIMIT_WINDOW_SEC`);
 - внешний доступ к `:8080` закрыт firewall/сетевой политикой;
 - TLS и `/setdomain` настроены;
 - бэкап БД создан и проверен.
@@ -209,6 +219,9 @@ curl -i "https://bot-test.example.com/webapp/v1/me"
 
 # 3) Проверить security headers на edge
 curl -I "https://bot-test.example.com/webapp" | rg -i "content-security-policy|x-frame-options|x-content-type-options|referrer-policy|permissions-policy"
+
+# 4) Проверить, что rate limit срабатывает (должен появиться 429)
+for i in $(seq 1 150); do curl -s -o /dev/null -w "%{http_code}\n" "https://bot-test.example.com/webapp/v1/me"; done | sort | uniq -c
 ```
 
 Доступный функционал:
