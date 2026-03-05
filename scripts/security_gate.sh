@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+# Keep tests independent from local secrets.
+export TOKEN="${TOKEN:-123456:SECURITY_GATE_DUMMY_TOKEN}"
+
 PYTHON_BIN="${PYTHON_BIN:-./.venv/bin/python}"
 if [[ -x "${PYTHON_BIN}" ]]; then
   :
