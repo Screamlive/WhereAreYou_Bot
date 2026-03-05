@@ -24,30 +24,34 @@ from core import (
     user_is_group_admin_any,
     user_is_group_viewer_any,
 )
-from db_repo import (
-    log_action,
-    user_exists_in_db,
-    is_user_approved,
-    get_admin_notification_recipients,
-    get_superadmin_group_notification_ids,
-    get_user_groups,
-    get_group_members,
-    get_approved_users,
-    get_user_fullname,
-    user_in_group,
+from app.repositories.absences_repo import (
     create_absence,
-    list_user_absences,
-    get_absence_by_id,
-    update_absence,
-    update_absence_status,
-    delete_absence,
-    list_pending_absences,
-    list_overlapping_absences,
     create_edit_request,
-    get_edit_request,
+    delete_absence,
     delete_edit_request,
+    get_absence_by_id,
+    get_edit_request,
     list_approved_absences_between,
     list_approved_absences_for_date,
+    list_overlapping_absences,
+    list_pending_absences,
+    list_user_absences,
+    update_absence,
+    update_absence_status,
+)
+from app.repositories.groups_repo import (
+    get_admin_notification_recipients,
+    get_group_members,
+    user_in_group,
+)
+from app.repositories.logs_repo import log_action
+from app.repositories.users_repo import (
+    get_approved_users,
+    get_superadmin_group_notification_ids,
+    get_user_fullname,
+    get_user_groups,
+    is_user_approved,
+    user_exists_in_db,
 )
 from texts import (
     TEXT_NOT_REGISTERED_SHORT,

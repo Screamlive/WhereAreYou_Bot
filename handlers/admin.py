@@ -11,26 +11,26 @@ from aiogram.types import (
 )
 
 from core import get_admin_scope, get_group_scope, get_role_menu, is_superadmin
-from db_repo import (
-    log_action,
-    user_exists_in_db,
-    is_user_admin,
-    get_admins,
-    get_approved_users,
-    get_group_members,
-    get_all_users,
-    get_user_fullname,
-    upsert_user_registration,
-    get_user_approval_status,
+from app.repositories.groups_repo import get_group_members
+from app.repositories.logs_repo import log_action
+from app.repositories.users_repo import (
     approve_user,
     delete_user_and_related,
-    list_pending_user_ids,
-    list_non_admin_approved_users,
+    get_admins,
+    get_all_users,
+    get_approved_users,
+    get_user_approval_status,
+    get_user_name_and_username,
+    get_user_fullname,
+    is_user_admin,
     list_admin_users,
+    list_non_admin_approved_users,
+    list_pending_user_ids,
     promote_to_admin,
     revoke_admin,
+    upsert_user_registration,
     update_user_fullname,
-    get_user_name_and_username,
+    user_exists_in_db,
 )
 from texts import (
     TEXT_EMPTY_VALUE,

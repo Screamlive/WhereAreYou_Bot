@@ -16,13 +16,12 @@ from core import (
     get_role_menu,
     get_group_scope,
 )
-from db_repo import (
-    user_exists_in_db,
-    is_user_approved,
+from app.repositories.groups_repo import get_group_membership_role, get_group_name
+from app.repositories.users_repo import (
     get_last_group_id,
+    is_user_approved,
     set_last_group_id,
-    get_group_name,
-    get_group_membership_role,
+    user_exists_in_db,
 )
 from keyboards import (
     BACK_BUTTON_TEXT,
