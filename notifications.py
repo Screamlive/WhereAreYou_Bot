@@ -1,4 +1,3 @@
-import asyncio
 from collections import defaultdict
 
 from aiogram import Bot
@@ -116,7 +115,10 @@ async def send_daily_notifications() -> None:
 
 
 def main() -> None:
-    asyncio.run(send_daily_notifications())
+    # Thin wrapper for backward compatibility with "python notifications.py".
+    from app.entrypoints.notifications_main import main as run_main
+
+    run_main()
 
 
 if __name__ == "__main__":

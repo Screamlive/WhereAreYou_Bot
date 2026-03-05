@@ -11,7 +11,6 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from database import init_db
 from settings import TOKEN
 from webapp_export import build_overlaps_export_filename, build_overlaps_xlsx
 from webapp_readonly import (
@@ -31,14 +30,6 @@ try:
     from config import WEBAPP_ALLOW_INITDATA_COMPAT as CONFIG_WEBAPP_ALLOW_INITDATA_COMPAT
 except ImportError:
     CONFIG_WEBAPP_ALLOW_INITDATA_COMPAT = True
-try:
-    from config import WEBAPP_HOST as CONFIG_WEBAPP_HOST
-except ImportError:
-    CONFIG_WEBAPP_HOST = "127.0.0.1"
-try:
-    from config import WEBAPP_PORT as CONFIG_WEBAPP_PORT
-except ImportError:
-    CONFIG_WEBAPP_PORT = 8080
 try:
     from config import WEBAPP_RATE_LIMIT_MAX_REQUESTS as CONFIG_WEBAPP_RATE_LIMIT_MAX_REQUESTS
 except ImportError:
@@ -446,10 +437,10 @@ def create_app() -> web.Application:
 
 
 def main() -> None:
-    init_db()
-    host = os.getenv("WEBAPP_HOST", str(CONFIG_WEBAPP_HOST))
-    port = int(os.getenv("WEBAPP_PORT", str(CONFIG_WEBAPP_PORT)))
-    web.run_app(create_app(), host=host, port=port)
+    # Thin wrapper for backward compatibility with "python webapp_api.py".
+    from app.entrypoints.webapp_main import main as run_main
+
+    run_main()
 
 
 if __name__ == "__main__":

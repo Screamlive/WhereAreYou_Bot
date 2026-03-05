@@ -8,8 +8,11 @@
 - [x] R1: добавлен базовый пакет `app/` и подпакеты `app/config`, `app/entrypoints`.
 - [x] R1: `settings.py` перенесен в пакетный слой с совместимым shim на корне.
 - [x] R1: `bot.py` переведен в thin-wrapper над `app.entrypoints.bot_main`.
+- [x] R2: `webapp_api.py` переведен в thin-wrapper над `app.entrypoints.webapp_main`.
+- [x] R2: `notifications.py` переведен в thin-wrapper над `app.entrypoints.notifications_main`.
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
-- [ ] R2+: не начато.
+- [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
+- [ ] R3+: не начато.
 
 ## 1) Проблема
 
