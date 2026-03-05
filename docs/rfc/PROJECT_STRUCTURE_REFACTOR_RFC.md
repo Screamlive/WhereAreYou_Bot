@@ -19,6 +19,7 @@
 - [x] R3: модуль `app/db/users.py` переведен с re-export на собственную SQL-реализацию (с сохранением совместимости `db_repo.DB_NAME` для тестов).
 - [x] R3: модуль `app/db/groups.py` переведен с re-export на собственную SQL-реализацию (с сохранением совместимости `db_repo.DB_NAME` для тестов).
 - [x] R3: модули `app/db/absences.py` и `app/db/logs.py` переведены с re-export на собственную SQL-реализацию (с сохранением совместимости `db_repo.DB_NAME` для тестов).
+- [x] R4: логика расчета пересечений и получателей уведомлений вынесена из `handlers/absences.py` в `app/use_cases/absence_overlaps.py` (с переходными alias для совместимости тестов).
 - [ ] R1: ручной smoke запуска (`bot.py`, `webapp_api.py`) на тестовом стенде.
 - [ ] R2: ручной smoke запуска (`notifications.py`) на тестовом стенде.
 - [x] R3: SQL-реализация перенесена в тематические модули (`users`, `groups`, `absences`, `logs`).

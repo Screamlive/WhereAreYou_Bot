@@ -15,7 +15,6 @@ from aiogram.types import (
 )
 
 from core import (
-    get_admin_groups,
     get_admin_scope,
     get_group_scope,
     get_role_menu,
@@ -33,23 +32,24 @@ from app.repositories.absences_repo import (
     get_edit_request,
     list_approved_absences_between,
     list_approved_absences_for_date,
-    list_overlapping_absences,
     list_pending_absences,
     list_user_absences,
     update_absence,
     update_absence_status,
 )
 from app.repositories.groups_repo import (
-    get_admin_notification_recipients,
     get_group_members,
     user_in_group,
 )
 from app.repositories.logs_repo import log_action
+from app.use_cases.absence_overlaps import (
+    collect_overlaps_for_admin,
+    collect_overlaps_for_requester,
+    get_absence_recipients,
+)
 from app.repositories.users_repo import (
     get_approved_users,
-    get_superadmin_group_notification_ids,
     get_user_fullname,
-    get_user_groups,
     is_user_approved,
     user_exists_in_db,
 )
@@ -91,157 +91,15 @@ from utils import format_date_display
 router = Router()
 bot: Bot | None = None
 
+# Backward-compatible aliases for tests and transitional imports.
+_collect_overlaps_for_admin = collect_overlaps_for_admin
+_collect_overlaps_for_requester = collect_overlaps_for_requester
+_get_absence_recipients = get_absence_recipients
+
 
 def set_bot(bot_instance: Bot) -> None:
     global bot
     bot = bot_instance
-
-
-OVERLAP_ITEMS_LIMIT = 10
-
-
-def _format_overlap_rows(
-    rows: list[tuple],
-    limit: int | None = OVERLAP_ITEMS_LIMIT,
-    add_tail: bool = True,
-) -> list[str]:
-    if limit is None:
-        visible_rows = rows
-    else:
-        visible_rows = rows[:limit]
-
-    lines: list[str] = []
-    for row in visible_rows:
-        (_abs_id, _uid, category, sd, ed, _comment, status, fullname, username) = row
-        name = f"{fullname} (@{username})" if username else fullname
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        lines.append(f"{name} — {category} {sd_disp}–{ed_disp} ({status})")
-    remaining = len(rows) - len(visible_rows)
-    if add_tail and remaining > 0:
-        lines.append(f"…и ещё {remaining}")
-    return lines
-
-
-def _build_group_overlap_sections(
-    group_rows: list[tuple[str, list[tuple]]],
-    limit: int | None = OVERLAP_ITEMS_LIMIT,
-    add_tail: bool = True,
-) -> str | None:
-    sections: list[str] = []
-    for group_name, rows in group_rows:
-        if not rows:
-            continue
-        lines = _format_overlap_rows(rows, limit=limit, add_tail=add_tail)
-        sections.append(f"Группа «{group_name}»:\n" + "\n".join(lines))
-    if not sections:
-        return None
-    return "\n\n".join(sections)
-
-
-def _collect_overlaps_for_user_groups(
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid, gname, _role in get_user_groups(target_user_id):
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((gname, rows))
-    return _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-
-
-def _collect_overlaps_for_requester(
-    requester_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    if is_superadmin(requester_id):
-        return _collect_overlaps_for_superadmin_scope(
-            requester_id,
-            target_user_id,
-            start_date,
-            end_date,
-            full=full,
-        )
-    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date, full=full)
-
-
-def _collect_overlaps_for_superadmin_scope(
-    superadmin_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    scope_group_ids = get_superadmin_group_notification_ids(superadmin_id)
-
-    if scope_group_ids is None:
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
-        if not rows:
-            return None
-        lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
-        return "Пересечения по всем пользователям:\n" + "\n".join(lines)
-
-    if not scope_group_ids:
-        return None
-
-    target_group_names = {gid: name for gid, name, _role in get_user_groups(target_user_id)}
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid in scope_group_ids:
-        if gid not in target_group_names:
-            continue
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((target_group_names[gid], rows))
-
-    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-    if not sections:
-        return None
-    return "Пересечения по фильтру суперадмина:\n\n" + sections
-
-
-def _collect_overlaps_for_admin(
-    admin_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    if is_superadmin(admin_id):
-        return _collect_overlaps_for_superadmin_scope(
-            admin_id,
-            target_user_id,
-            start_date,
-            end_date,
-            full=full,
-        )
-
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    admin_groups = get_admin_groups(admin_id)
-    if not admin_groups:
-        return None
-
-    target_group_names = {gid: name for gid, name, _role in get_user_groups(target_user_id)}
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid, gname in admin_groups:
-        if gid not in target_group_names:
-            continue
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((gname, rows))
-    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-    if not sections:
-        return None
-    return "Пересечения по группе:\n\n" + sections
-
-
-def _get_absence_recipients(target_user_id: int) -> set[int]:
-    group_ids = [gid for gid, _name, _role in get_user_groups(target_user_id)]
-    return set(get_admin_notification_recipients(group_ids))
 
 
 async def _send_long_message(chat_id: int, text: str, reply_markup=None) -> None:
@@ -282,7 +140,7 @@ async def _send_admin_request_with_overlaps(
     await _send_long_message(admin_id, base_text, reply_markup=reply_markup)
 
     # 2) Второе сообщение — пересечения (если есть), полным списком.
-    overlaps_full = _collect_overlaps_for_admin(
+    overlaps_full = collect_overlaps_for_admin(
         admin_id,
         target_user_id,
         start_date,
@@ -408,7 +266,7 @@ async def process_comment(message: types.Message, state: FSMContext):
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
 
-    overlaps_text = _collect_overlaps_for_requester(user_id, user_id, sd, ed)
+    overlaps_text = collect_overlaps_for_requester(user_id, user_id, sd, ed)
     if overlaps_text:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -434,7 +292,7 @@ async def process_comment(message: types.Message, state: FSMContext):
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
     # Уведомим админов групп пользователя и суперадминов (с учетом фильтра суперадмина).
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -492,7 +350,7 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -613,7 +471,7 @@ async def request_delete_absence(cb: CallbackQuery):
         return
 
     # Отправим запрос админам групп пользователя и суперадминам (с учетом фильтра суперадмина).
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     for admin_id in admin_ids:
@@ -761,7 +619,7 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         f"{old_part}{new_part}"
     )
 
-    overlaps_for_user = _collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
+    overlaps_for_user = collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
 
     await message.answer(
         f"Запрос на изменение заявки #{abs_id} отправлен на одобрение администратору.\n"
@@ -775,7 +633,7 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
         InlineKeyboardButton(text="Отклонить", callback_data=f"decline_edit:{req_id}")
     ]])
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         try:
             await _send_admin_request_with_overlaps(
@@ -1800,7 +1658,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     )
     log_action(message.from_user.id, f"AddAbsForAnother user={target_user_id}, abs_id={abs_id}")
 
-    overlaps_text = _collect_overlaps_for_requester(message.from_user.id, target_user_id, sd, ed)
+    overlaps_text = collect_overlaps_for_requester(message.from_user.id, target_user_id, sd, ed)
     if overlaps_text:
         await message.answer(
             "Внимание: найдено пересечение с отсутствиями других пользователей:\n\n"
@@ -1818,7 +1676,7 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
 
     user_id = message.from_user.id
 
-    admin_ids = _get_absence_recipients(target_user_id)
+    admin_ids = get_absence_recipients(target_user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
