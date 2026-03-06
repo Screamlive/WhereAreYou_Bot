@@ -367,6 +367,9 @@ cp config_example.py config.py
 
 WebApp не заменяет чат-бот. Это read-only интерфейс для анализа пересечений и экспорта.
 
+Точка входа в боте — inline-кнопка `Открыть WebApp` (и команда `/webapp` как fallback).
+Reply-кнопка `web_app` на части Telegram Desktop-клиентов передает auth-контекст менее стабильно.
+
 ### Что отдает backend
 
 `GET /webapp/v1/me`
@@ -640,6 +643,25 @@ Alias-цели:
 - проверку branch protection через `gh api`, если `gh` установлен и remote распознан как GitHub.
 
 ## Deploy-артефакты
+
+### Пошаговый запуск с нуля
+
+Полный runbook (DNS + Nginx + BotFather + systemd + ops CLI) вынесен в `README.md`,
+раздел **«Пошаговый запуск с нуля (рекомендуется)»**.
+
+Коротко, последовательность такая:
+
+1. Подготовить `.venv`, установить `requirements.txt`.
+2. Создать `config.py` из `config_example.py` и заполнить runtime-настройки.
+3. Создать `/etc/telegram_bot/telegram_bot.env` и записать `TOKEN`.
+4. Создать DNS `A`-record для домена WebApp.
+5. Поднять Nginx по шаблону `deploy/nginx/telegram_webapp.conf.example` + HTTPS (certbot).
+6. Альтернатива Nginx: Cloudflare Tunnel на `127.0.0.1:8080` (если `443` занят другим сервисом).
+7. Зарегистрировать домен через BotFather `/setdomain`.
+8. Установить user unit'ы из `deploy/systemd-user/*`, сделать `daemon-reload`, включить linger.
+9. Через `manage.py` включить/запустить `bot`, `webapp`, `notify-timer`.
+10. Через `manage.py` включить backup/monitor scheduler и добавить техконтакты.
+11. Проверить `manage.py status`, `manage.py smoke`, `manage.py monitor check --notify`.
 
 ### EnvironmentFile
 

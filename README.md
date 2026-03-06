@@ -11,9 +11,27 @@ Telegram-бот для учета отсутствий сотрудников. �
 - `app/` -> актуальная реализация модулей.
 - корневые файлы `bot.py`, `webapp_api.py`, `webapp_readonly.py`, `webapp_export.py`, `settings.py`, `db_repo.py` -> compatibility shim'ы для старых импортов и сценариев запуска.
 
-## Быстрый старт
+## Пошаговый запуск с нуля (рекомендуется)
 
-### 1. Установить зависимости
+Ниже — production-like сценарий с публикацией через Nginx и операционным управлением через CLI-панель `manage.py`.
+
+### 0) Предпосылки
+
+На сервере должны быть:
+
+- Ubuntu/Linux с `python3`, `python3-venv`, `git`;
+- домен, которым вы управляете (для WebApp);
+- Telegram-бот и его `TOKEN`.
+
+### 1) Клонировать проект
+
+```bash
+cd ~
+git clone <repo_url> telegram_bot
+cd ~/telegram_bot
+```
+
+### 2) Подготовить Python-окружение
 
 ```bash
 python3 -m venv .venv
@@ -27,46 +45,196 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-Зависимости CLI, бота и WebApp общие. До установки `requirements.txt` даже `manage.py --help` может не запуститься.
-
-### 2. Создать локальный `config.py`
+### 3) Создать локальный `config.py` (обязательный шаг)
 
 ```bash
 cp config_example.py config.py
 ```
 
-Это по-прежнему обязательный шаг. В проекте остались legacy-модули, которые импортируют `config` напрямую, поэтому одного `EnvironmentFile` без `config.py` сейчас недостаточно.
+`config.py` сейчас нужен для несекретных runtime-параметров (legacy-импорты еще есть).
 
-### 3. Заполнить конфигурацию
-
-Минимум для локального запуска бота:
-
-- задать `TOKEN` в `/etc/telegram_bot/telegram_bot.env`
-  (или временно `export TOKEN=...` для разового запуска);
-- оставить `DB_NAME = "bot_database.db"`, если нет явной причины переносить БД;
-- указать `WEBAPP_URL`, если нужна кнопка `Пересечения (WebApp)` в меню.
-
-### 4. Запустить компоненты
-
-Telegram-бот:
+### 4) Создать единую точку хранения секрета (`TOKEN`)
 
 ```bash
-python bot.py
+sudo mkdir -p /etc/telegram_bot
+sudo cp deploy/env/telegram_bot.env.example /etc/telegram_bot/telegram_bot.env
+sudo chown "$USER":"$USER" /etc/telegram_bot/telegram_bot.env
+sudo chmod 600 /etc/telegram_bot/telegram_bot.env
+nano /etc/telegram_bot/telegram_bot.env
 ```
 
-WebApp backend:
+В файле оставляем минимум:
+
+```env
+TOKEN=<ваш_бот_токен>
+```
+
+### 5) Настроить `config.py`
+
+Минимум:
+
+- `DB_NAME = "bot_database.db"` (рекомендованный дефолт);
+- `WEBAPP_URL = "https://<ваш-домен>/webapp"`;
+- `WEBAPP_HOST = "127.0.0.1"`;
+- `WEBAPP_PORT = 8080`;
+- `WEBAPP_ALLOW_DEV_FALLBACK = False`;
+- `WEBAPP_ALLOW_INITDATA_COMPAT = False`.
+
+### 6) Настроить DNS (A-record)
+
+В DNS-провайдере:
+
+- создать `A` запись, например `bot-test.example.com` -> `<IP_сервера>`.
+
+Проверка:
 
 ```bash
-python webapp_api.py
+dig +short bot-test.example.com
 ```
 
-Разовая отправка ежедневных уведомлений:
+### 7) Публикация WebApp через Nginx + HTTPS (основной вариант)
+
+Установка:
 
 ```bash
-python notifications.py
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
 ```
 
-SQLite-схема создается при старте через `database.init_db()`.
+Конфиг Nginx:
+
+```bash
+sudo cp deploy/nginx/telegram_webapp.conf.example /etc/nginx/sites-available/telegram_webapp
+sudo nano /etc/nginx/sites-available/telegram_webapp
+```
+
+Замените `bot-test.example.com` на ваш домен, затем:
+
+```bash
+sudo ln -sf /etc/nginx/sites-available/telegram_webapp /etc/nginx/sites-enabled/telegram_webapp
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Выпуск сертификата:
+
+```bash
+sudo certbot --nginx -d bot-test.example.com
+```
+
+### 8) (Опционально) Публикация через Cloudflare Tunnel вместо Nginx
+
+Если на сервере уже занят `443` и не хотите трогать текущий edge-прокси, можно опубликовать только WebApp через Tunnel.
+
+Минимум:
+
+```bash
+# cloudflared уже должен быть установлен и авторизован
+cloudflared tunnel create telegram-webapp
+cloudflared tunnel route dns telegram-webapp bot-test.example.com
+```
+
+`/etc/cloudflared/config.yml`:
+
+```yaml
+tunnel: telegram-webapp
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: bot-test.example.com
+    service: http://127.0.0.1:8080
+  - service: http_status:404
+```
+
+Файл `<tunnel-id>.json` берется из `~/.cloudflared/` после `cloudflared tunnel create`
+и копируется в `/etc/cloudflared/`.
+
+Далее:
+
+```bash
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared
+```
+
+Если используете Cloudflare Tunnel, шаг с Nginx можно пропустить.
+
+### 9) Зарегистрировать WebApp-домен в BotFather
+
+В `@BotFather`:
+
+- команда `/setdomain`
+- выбрать вашего бота
+- указать домен `https://bot-test.example.com`
+
+### 10) Установить user-services для бота/WebApp/ежедневных уведомлений
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd-user/telegram_bot.service.example ~/.config/systemd/user/telegram_bot.service
+cp deploy/systemd-user/telegram_webapp.service.example ~/.config/systemd/user/telegram_webapp.service
+cp deploy/systemd-user/telegram_bot_notify.service ~/.config/systemd/user/telegram_bot_notify.service
+cp deploy/systemd-user/telegram_bot_notify.timer ~/.config/systemd/user/telegram_bot_notify.timer
+systemctl --user daemon-reload
+sudo loginctl enable-linger "$USER"
+```
+
+### 11) Первичная настройка через CLI-панель (основной способ)
+
+Запуск панели:
+
+```bash
+python manage.py
+# или
+./manage
+```
+
+Рекомендованный порядок:
+
+В интерактивном меню пройдите:
+
+- `Управление systemd-сервисами` -> включить и запустить `bot`, `webapp`, `notify-timer` (`scope=user`);
+- `Backup БД` -> включить scheduler;
+- `Мониторинг и тех-уведомления` -> включить scheduler/events и проверить `monitor check --notify`.
+
+Если удобнее в командном режиме:
+
+```bash
+python manage.py service bot enable --scope user
+python manage.py service bot start --scope user
+python manage.py service webapp enable --scope user
+python manage.py service webapp start --scope user
+python manage.py service notify-timer enable --scope user
+python manage.py service notify-timer start --scope user
+```
+
+### 12) Настроить backup и мониторинг через CLI
+
+```bash
+python manage.py backup schedule-enable --time 03:30 --retain 20 --scope user
+python manage.py monitor schedule-enable --interval 10 --scope user
+python manage.py alerts contacts add --id <telegram_id_техадмина>
+```
+
+Если нужен мониторинг Nginx, включите в `config.py`:
+
+```python
+MONITOR_NGINX_ENABLED = True
+MONITOR_NGINX_UNIT = "nginx.service"
+```
+
+### 13) Проверка после запуска
+
+```bash
+python manage.py status
+python manage.py smoke --url https://bot-test.example.com/webapp
+python manage.py monitor check --notify
+```
+
+Ожидаемо:
+
+- `bot` и `webapp` активны;
+- `notify-timer` активен;
+- smoke возвращает успешный результат (`401/429` без auth-контекста).
 
 ## Конфигурация
 
@@ -384,6 +552,11 @@ python manage.py governance checklist
 ```bash
 bash deploy/setup.sh --dev
 ```
+
+### Варианты публикации WebApp
+
+- Основной вариант: `Nginx + certbot` (см. шаги 6-7 выше).
+- Альтернатива: `Cloudflare Tunnel` (см. шаг 8 выше), когда `443` уже занят другим сервисом.
 
 ### `systemd` шаблоны
 
