@@ -41,7 +41,8 @@ cp config_example.py config.py
 
 Минимум для локального запуска бота:
 
-- задать `TOKEN` в `config.py` или через окружение;
+- задать `TOKEN` в `/etc/telegram_bot/telegram_bot.env`
+  (или временно `export TOKEN=...` для разового запуска);
 - оставить `DB_NAME = "bot_database.db"`, если нет явной причины переносить БД;
 - указать `WEBAPP_URL`, если нужна кнопка `Пересечения (WebApp)` в меню.
 
@@ -71,14 +72,12 @@ SQLite-схема создается при старте через `database.in
 
 ### Источники настроек
 
-Централизованное чтение через `app.config.settings` использует такой порядок:
+Централизованное чтение через `app.config.settings`:
 
-1. переменные окружения процесса;
-2. путь из `TELEGRAM_BOT_ENV_FILE`;
-3. `~/.config/telegram_bot/telegram_bot.env`;
-4. `/etc/telegram_bot/telegram_bot.env`;
-5. `./.env`;
-6. `config.py` как локальный fallback.
+- для секретов (`TOKEN`) источник только окружение процесса;
+- при старте автоматически подхватывается `EnvironmentFile`:
+  `/etc/telegram_bot/telegram_bot.env`
+- `config.py` не используется как fallback для `TOKEN`.
 
 Важно:
 
@@ -90,7 +89,7 @@ SQLite-схема создается при старте через `database.in
 
 `config.py` / env:
 
-- `TOKEN` -> токен бота.
+- `TOKEN` -> только env (`/etc/telegram_bot/telegram_bot.env` или `export TOKEN=...`).
 - `DB_NAME` -> путь к SQLite-файлу.
 - `WEBAPP_URL` -> публичный URL вида `https://example.com/webapp`.
 - `WEBAPP_HOST`, `WEBAPP_PORT` -> bind WebApp backend.
@@ -173,7 +172,7 @@ python webapp_api.py
 
 Для браузерной локальной проверки без Telegram нужны одновременно:
 
-- валидный `TOKEN` в окружении или `config.py`;
+- валидный `TOKEN` в окружении;
 - `WEBAPP_ALLOW_DEV_FALLBACK=1`;
 - существующий пользователь в БД.
 
@@ -408,7 +407,7 @@ System services:
 
 Production practice:
 
-- `TOKEN` держать во внешнем `EnvironmentFile`;
+- `TOKEN` хранить только в `/etc/telegram_bot/telegram_bot.env`;
 - `config.py` хранить локально и не коммитить;
 - `WEBAPP_*` и `MONITOR_*` можно задавать через env или `config.py`;
 - `config.py` все равно должен оставаться в deploy-окружении.

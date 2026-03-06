@@ -43,20 +43,16 @@ cp config_example.py config.py
 
 Минимальный набор для локального запуска:
 
-- `TOKEN`
+- `TOKEN` (только через `/etc/telegram_bot/telegram_bot.env` или `export TOKEN=...`)
 - `DB_NAME`
 - `WEBAPP_URL` при использовании кнопки `Пересечения (WebApp)`
 
 ### Источники настроек
 
-Для параметров, которые читаются через `app.config.settings`, порядок такой:
+Для параметров, которые читаются через `app.config.settings`:
 
 1. env процесса;
-2. путь из `TELEGRAM_BOT_ENV_FILE`;
-3. `~/.config/telegram_bot/telegram_bot.env`;
-4. `/etc/telegram_bot/telegram_bot.env`;
-5. `./.env`;
-6. `config.py`.
+2. `/etc/telegram_bot/telegram_bot.env`.
 
 Но это не означает, что весь проект уже целиком env-first.
 
@@ -730,7 +726,7 @@ CI workflow:
 
 ### `app/config/`
 
-- bootstrap env-файлов;
+- bootstrap `EnvironmentFile` (`/etc/telegram_bot/telegram_bot.env`);
 - чтение строк, чисел, bool;
 - fail-fast для `TOKEN`.
 
@@ -864,7 +860,8 @@ SQLite-файл по умолчанию -> `bot_database.db`.
 
 ## Известные ограничения и технический долг
 
-- `config.py` пока обязателен, потому что проект еще не полностью ушел от прямых импортов `config`.
+- `config.py` пока обязателен для несекретных runtime-параметров из-за legacy-импортов.
+- `TOKEN` больше не читается из `config.py`.
 - `DB_NAME` пока не централизован в одном settings-layer.
 - Корневые shim-модули сохранены ради обратной совместимости и старых тестов/импортов.
 - Часть deploy-потока все еще опирается на legacy entrypoint'ы в корне репозитория, хотя основная реализация уже живет в `app/*`.
