@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegram WebApp API (user service)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/telegram_bot
+ExecStart=%h/telegram_bot/.venv/bin/python %h/telegram_bot/webapp_api.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/telegram_bot/telegram_bot.env
+
+[Install]
+WantedBy=default.target
+

@@ -8,6 +8,7 @@ __pycache__/
 
 # Логи
 *.log
+.runtime/
 
 # Локальные БД
 *.db

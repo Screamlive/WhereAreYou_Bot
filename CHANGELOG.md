@@ -3,12 +3,34 @@
 ## 2026-03-06
 
 Технические изменения:
+- Добавлена операционная CLI-панель: `manage.py` / `./manage`.
+- Добавлен интерактивный режим меню с мастером рассылки (источник, аудитория, предпросмотр, подтверждение).
+- Добавлены команды: `status`, `run`, `service`, `smoke`, `backup`, `broadcast`.
+- Для локальных компонентов в CLI добавлены: запуск в фоне, статус и остановка (`run --mode background`, `run --action status/stop`).
+- Добавлены governance-команды: `governance checks` и `governance checklist` (доступны в командном режиме CLI).
+- Добавлены операции backup: `restore`, `prune`, `usage`; при restore создается safety backup.
+- Добавлен backup planner в CLI/menu: `backup schedule-enable/schedule-disable/schedule-status/schedule-run`.
+- В backup pipeline scheduler добавлена автоматическая цепочка `create -> verify -> prune --retain N`.
+- Добавлены disk guardrails (ok/warning/critical): в `status`, `backup usage`, а также блокировка `backup create/restore` при критическом уровне.
+- Добавлены тех-уведомления: контакты (`alerts contacts ...`), тестовая отправка (`alerts test`) и мониторинг (`monitor check --notify`).
+- В интерактивном меню добавлен выбор техадминов из списка пользователей (без ручного ввода Telegram ID); при удалении показывается список текущих техадминов.
+- Добавлен monitor scheduler: `monitor schedule-enable/schedule-disable/schedule-status/schedule-run`.
+- Добавлен событийный мониторинг через systemd `OnFailure`: `monitor events-enable/events-disable/events-status` + служебная команда `alerts event`.
+- Скоуп по умолчанию для `bot`/`webapp` в операционном CLI переведен на `user` (systemd user services).
+- В интерактивном меню добавлены кнопки возврата в главное меню во всех основных разделах (без необходимости `Ctrl+C`).
+- Добавлен anti-spam state для тех-уведомлений (повторно не отправляет неизменившийся инцидент).
+- Улучшен UX CLI: очистка экрана между шагами и цветовая индикация статусов.
+- Усилены валидации интерактивного меню: подтверждения `y/n` и выборы пунктов теперь строго валидируются с повторным запросом при неверном вводе.
+- Governance убран из интерактивного меню (оставлен в командном режиме для maintainer-задач).
+- Добавлена загрузка env-переменных из `/etc/telegram_bot/telegram_bot.env` и `.env` (если есть), чтобы TOKEN корректно подхватывался в CLI/скриптах.
+- Добавлена загрузка env из `~/.config/telegram_bot/telegram_bot.env` (частый локальный путь тестового стенда).
+- В `broadcast.py` добавлен preview текста сообщения и отложена проверка TOKEN до этапа реальной отправки (dry-run работает без токена).
+- Добавлены базовые unit-тесты CLI: `tests/test_ops_cli.py`.
 - Закрыт RFC по рефакторингу структуры проекта (MVP выполнен).
 - RFC по безопасности и рефакторингу структуры перенесены в архив `docs/archive/`.
 - Незавершенные хвосты перенесены в активный RFC по операционной CLI-панели:
   - branch protection для `main` с обязательным check `security-gate`;
   - плановая ревизия и постепенное удаление root shim-модулей.
-- RFC по CLI уточнен: добавлен интерактивный текстовый режим меню (`python manage.py menu`) и командный режим для автоматизации.
 
 ## 2026-03-03
 

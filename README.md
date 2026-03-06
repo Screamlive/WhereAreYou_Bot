@@ -204,9 +204,13 @@ bot-test.example.com
 - даже с tunnel доступ к данным защищается только backend-проверкой `initData`, не самим фактом HTTPS.
 
 Systemd-шаблоны для production:
-- `deploy/systemd/telegram_bot.service.example`
-- `deploy/systemd/telegram_webapp.service.example`
-- оба используют `EnvironmentFile=/etc/telegram_bot/telegram_bot.env`.
+- рекомендуемый вариант (user services):
+  - `deploy/systemd-user/telegram_bot.service.example`
+  - `deploy/systemd-user/telegram_webapp.service.example`
+- альтернативно (system services):
+  - `deploy/systemd/telegram_bot.service.example`
+  - `deploy/systemd/telegram_webapp.service.example`
+- все используют `EnvironmentFile=/etc/telegram_bot/telegram_bot.env`.
 
 ## Security baseline перед прод-деплоем
 
@@ -276,27 +280,80 @@ systemctl --user status telegram_bot_notify.timer
 sudo loginctl enable-linger $USER
 ```
 
-## Сервисная рассылка
+## Операционная CLI-панель
 
-Для операционных объявлений есть CLI-скрипт `broadcast.py`.
-
-Примеры:
+Есть единая точка управления:
 ```
-# Предпросмотр получателей без отправки
-python broadcast.py --audience approved --text "Тестовая рассылка" --dry-run
-
-# Рассылка всем одобренным
-python broadcast.py --audience approved --file CHANGELOG.md
-
-# Рассылка только актуального блока CHANGELOG (верхний раздел)
-python broadcast.py --audience approved --changelog-latest
-
-# Рассылка участникам конкретной группы
-python broadcast.py --audience group:1 --text "Сообщение для группы 1"
-
-# Рассылка суперадминам (не более 5 получателей)
-python broadcast.py --audience superadmins --text "Проверка канала" --limit 5
+python manage.py
+# или
+./manage
 ```
+
+Примечание по секретам для локального CLI:
+- поддерживаются источники `TOKEN` (в порядке приоритета): env процесса,
+  `TELEGRAM_BOT_ENV_FILE`, `~/.config/telegram_bot/telegram_bot.env`,
+  `/etc/telegram_bot/telegram_bot.env`, `./.env`, `config.py` (fallback).
+
+По умолчанию откроется интерактивное меню с основными сценариями:
+- статус компонентов;
+- локальные компоненты без systemd (запуск в фоне/остановка/статус + foreground при необходимости);
+- управление systemd-сервисами;
+- рассылка (wizard: источник -> аудитория -> dry-run -> подтверждение `SEND`);
+- smoke WebApp;
+- backup БД (create/list/verify/restore/prune/usage + scheduler);
+- мониторинг и тех-уведомления (контакты, check, monitor timer);
+- событийные алерты через systemd `OnFailure` (enable/disable/status).
+- во всех разделах меню добавлен явный пункт возврата в главное меню.
+
+Командный режим для автоматизации:
+```
+python manage.py status
+python manage.py run bot --mode background
+python manage.py run bot --action status
+python manage.py run bot --action stop
+python manage.py service bot status --scope user
+python manage.py smoke --url https://bot-test.justasite.cc/webapp
+python manage.py governance checks --branch main
+python manage.py governance checklist
+python manage.py backup create
+python manage.py backup restore --path backups/bot_database_YYYYMMDD_HHMMSS.db
+python manage.py backup prune --retain 20
+python manage.py backup usage
+python manage.py backup schedule-enable --time 03:30 --retain 20 --scope user
+python manage.py backup schedule-status --scope user
+python manage.py monitor check --notify
+python manage.py monitor schedule-enable --interval 10 --scope user
+python manage.py monitor events-enable --scope user --units bot,webapp
+python manage.py monitor events-status --scope user --units bot,webapp
+python manage.py alerts contacts add --id 123456789
+python manage.py alerts test --message "Тест тех-уведомлений"
+```
+
+Ежедневный операционный сценарий:
+```
+# 1) Проверка состояния
+python manage.py status
+python manage.py monitor check
+
+# 2) Backup (разово или по расписанию)
+python manage.py backup create
+python manage.py backup verify
+
+# 3) При необходимости — рассылка
+python manage.py broadcast --audience approved --changelog-latest --dry-run
+python manage.py broadcast --audience approved --changelog-latest --confirm
+```
+
+Пример рассылки в командном режиме:
+```
+# Предпросмотр (без отправки)
+python manage.py broadcast --audience approved --changelog-latest --dry-run
+
+# Реальная отправка (требуется --confirm)
+python manage.py broadcast --audience approved --changelog-latest --confirm
+```
+
+Скрипт `broadcast.py` сохранен для обратной совместимости и может использоваться напрямую.
 
 Поддерживаемые аудитории:
 - `all`
@@ -322,8 +379,8 @@ python broadcast.py --audience superadmins --text "Проверка канала
 
 Для рассылки последнего релиза используйте:
 ```
-python broadcast.py --audience approved --changelog-latest --dry-run
-python broadcast.py --audience approved --changelog-latest
+python manage.py broadcast --audience approved --changelog-latest --dry-run
+python manage.py broadcast --audience approved --changelog-latest --confirm
 ```
 
 ## Документация
@@ -331,7 +388,7 @@ python broadcast.py --audience approved --changelog-latest
 - Подробное описание функций и ролей — в `DOCUMENTATION.md`.
 - Короткий пользовательский changelog — в `CHANGELOG.md`.
 - Архив реализованных RFC — в `docs/archive/`.
-- Активный RFC текущего этапа — `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
+- Завершенный RFC операционной панели — `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
 
 ## Структура проекта
 
@@ -339,6 +396,7 @@ python broadcast.py --audience approved --changelog-latest
 - `app/config/settings.py` — чтение runtime-настроек и секретов.
 - `app/db/` + `app/repositories/` — SQL-слой и фасады репозиториев.
 - `app/use_cases/` — бизнес-сценарии (отсутствия, модерация, пересечения, экспорты).
+- `app/ops/` — операционный CLI-слой (menu/status/service/smoke/broadcast/backup/alerts/monitor).
 - `app/webapp/` — WebApp-слой:
   - `api.py` (HTTP handlers/factory),
   - `auth.py` (initData/auth),
@@ -350,6 +408,7 @@ python broadcast.py --audience approved --changelog-latest
 - `core.py`, `keyboards.py`, `texts.py`, `utils.py` — общий слой Telegram-бота.
 - `database.py` — инициализация схемы SQLite.
 - `tests/` — тесты.
+- `manage.py`, `manage` — единая CLI-панель (командный + интерактивный режимы).
 - `bot.py`, `webapp_api.py`, `webapp_readonly.py`, `webapp_export.py`, `settings.py`, `db_repo.py` — совместимые shim-модули.
 - `config.py` — локальный fallback-конфиг (не хранится в git), `config_example.py` — пример.
 - `deploy/env/telegram_bot.env.example` — шаблон production EnvironmentFile (секреты).

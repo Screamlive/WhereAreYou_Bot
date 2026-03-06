@@ -244,19 +244,96 @@ WEBAPP_HOST=127.0.0.1 WEBAPP_PORT=8080 python webapp_api.py
 - `deploy/env/telegram_bot.env.example`
 
 Systemd-шаблоны:
-- `deploy/systemd/telegram_bot.service.example`
-- `deploy/systemd/telegram_webapp.service.example`
-- `deploy/systemd-user/telegram_bot_notify.service`
+- рекомендуемый вариант (user services):
+  - `deploy/systemd-user/telegram_bot.service.example`
+  - `deploy/systemd-user/telegram_webapp.service.example`
+  - `deploy/systemd-user/telegram_bot_notify.service`
+- альтернативно (system services):
+  - `deploy/systemd/telegram_bot.service.example`
+  - `deploy/systemd/telegram_webapp.service.example`
 
 Перед релизом запускается security gate:
 ```
 ./scripts/security_gate.sh
 ```
 
-## Сервисная рассылка (CLI)
+## Операционная CLI-панель
 
-Скрипт `broadcast.py` используется для сервисных объявлений через бот
-(чейнджлог, техработы, инструкции).
+Единая точка входа:
+```
+python manage.py
+# или
+./manage
+```
+
+Источники `TOKEN` для CLI/скриптов (по приоритету):
+- переменная окружения процесса;
+- путь из `TELEGRAM_BOT_ENV_FILE`;
+- `~/.config/telegram_bot/telegram_bot.env`;
+- `/etc/telegram_bot/telegram_bot.env`;
+- `./.env`.
+- `config.py` (fallback для локальной разработки).
+
+Без аргументов запускается интерактивное меню:
+- статус компонентов;
+- локальные компоненты без systemd (запуск в фоне/остановка/статус + foreground);
+- управление systemd unit'ами;
+- рассылка с wizard-потоком (источник, аудитория, предпросмотр, подтверждение `SEND`);
+- smoke WebApp;
+- backup БД (create/list/verify/restore/prune/usage + scheduler);
+- мониторинг и тех-уведомления (контакты, check, monitor timer; в menu техадмины выбираются из списка пользователей);
+- событийные алерты через systemd `OnFailure` (enable/disable/status).
+- во всех разделах есть явный пункт возврата в главное меню.
+
+Командный режим (для автоматизации):
+```
+python manage.py status
+python manage.py run bot --mode background
+python manage.py run bot --action status
+python manage.py run bot --action stop
+python manage.py run bot --mode foreground
+python manage.py service bot restart --scope user
+python manage.py smoke --url https://bot-test.justasite.cc/webapp
+python manage.py backup create
+python manage.py governance checks --branch main
+python manage.py governance checklist
+python manage.py backup restore --path backups/bot_database_YYYYMMDD_HHMMSS.db
+python manage.py backup prune --retain 20
+python manage.py backup usage
+python manage.py backup schedule-enable --time 03:30 --retain 20 --scope user
+python manage.py backup schedule-status --scope user
+python manage.py monitor check --notify
+python manage.py monitor schedule-enable --interval 10 --scope user
+python manage.py monitor events-enable --scope user --units bot,webapp
+python manage.py monitor events-status --scope user --units bot,webapp
+python manage.py alerts contacts add --id 123456789
+python manage.py alerts test --message "Тест тех-уведомлений"
+```
+
+Ежедневный runbook оператора:
+```
+# 1) Проверить состояние
+python manage.py status
+python manage.py monitor check
+
+# 2) Проверить/выполнить backup
+python manage.py backup usage
+python manage.py backup create
+python manage.py backup verify
+
+# 3) При необходимости — сервисная рассылка
+python manage.py broadcast --audience approved --changelog-latest --dry-run
+python manage.py broadcast --audience approved --changelog-latest --confirm
+```
+
+### Рассылка
+
+Команда:
+```
+python manage.py broadcast ...
+```
+
+`broadcast.py` сохранен как совместимый legacy-скрипт.
 
 Поддерживаемые аудитории:
 - `all` — все пользователи из БД;
@@ -270,14 +347,49 @@ Systemd-шаблоны:
 - `--changelog-latest [PATH]` — взять только верхний релизный блок из CHANGELOG
   (по умолчанию `CHANGELOG.md`);
 - `--dry-run` — только показать получателей, без отправки;
+- `--confirm` — обязательное подтверждение для реальной отправки;
 - `--limit N` — ограничить число получателей;
 - `--delay SEC` — пауза между отправками.
 
 Пример:
 ```
-python broadcast.py --audience approved --file CHANGELOG.md --dry-run
-python broadcast.py --audience approved --changelog-latest
+python manage.py broadcast --audience approved --file CHANGELOG.md --dry-run
+python manage.py broadcast --audience approved --changelog-latest --confirm
 ```
+
+### Backup-команды
+
+- `python manage.py backup create` — создать backup текущей БД.
+- `python manage.py backup list` — показать список backup-файлов.
+- `python manage.py backup verify [--path FILE]` — проверить integrity (`PRAGMA integrity_check`).
+- `python manage.py backup restore --path FILE` — восстановить БД из backup (с созданием safety backup текущей БД).
+- `python manage.py backup prune --retain N` — удалить старые backup, оставить последние `N`.
+- `python manage.py backup usage` — показать свободное место на томе backup.
+- `python manage.py backup schedule-enable --time HH:MM --retain N --scope user|system` — включить backup timer.
+- `python manage.py backup schedule-status --scope user|system` — показать статус backup timer.
+- `python manage.py backup schedule-disable --scope user|system` — отключить backup timer.
+- `python manage.py backup schedule-run --scope user|system` — запустить backup job вручную.
+
+### Monitor/alerts-команды
+
+- `python manage.py alerts contacts list` — список техадминов.
+- `python manage.py alerts contacts add --id <telegram_id>` — добавить техадмина.
+- `python manage.py alerts contacts remove --id <telegram_id>` — удалить техадмина.
+- `python manage.py alerts test --message "..."` — отправить тестовое тех-уведомление.
+- `python manage.py monitor check [--notify]` — проверка инцидентов (bot/webapp/systemd/disk/backup).
+- `python manage.py monitor schedule-enable --interval N --scope user|system` — включить monitor timer.
+- `python manage.py monitor schedule-status --scope user|system` — статус monitor timer.
+- `python manage.py monitor schedule-disable --scope user|system` — отключить monitor timer.
+- `python manage.py monitor schedule-run --scope user|system` — запустить monitor job вручную.
+- `python manage.py monitor events-enable --scope user|system [--units CSV]` — включить событийные алерты (`OnFailure` drop-in + template unit).
+- `python manage.py monitor events-status --scope user|system [--units CSV]` — статус событийных алертов.
+- `python manage.py monitor events-disable --scope user|system [--units CSV]` — отключить событийные алерты.
+
+### Governance-команды
+
+- `python manage.py governance checks --branch main` — проверить release-gates
+  (локальный workflow + branch protection через `gh`, если доступен).
+- `python manage.py governance checklist` — вывести обязательный чеклист перед релизом.
 
 Правило ведения CHANGELOG для совместимости с `--changelog-latest`:
 - каждый релиз оформляется отдельным заголовком `## ...`;
@@ -295,7 +407,7 @@ python broadcast.py --audience approved --changelog-latest
 - Закрытые RFC по безопасности и рефакторингу структуры перенесены в архив:
   - `docs/archive/SECURITY_HARDENING_RFC.md`
   - `docs/archive/PROJECT_STRUCTURE_REFACTOR_RFC.md`
-- Активный RFC текущего этапа: `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
+- Завершенный RFC операционной панели: `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
 
 ## Карта модулей (актуальная)
 
@@ -304,6 +416,7 @@ python broadcast.py --audience approved --changelog-latest
 - `app/config/settings.py` — чтение env/config параметров;
 - `app/db/` и `app/repositories/` — SQL-слой и фасады репозиториев;
 - `app/use_cases/` — бизнес-логика (сценарии отсутствий, модерация, пересечения, отчеты/экспорты);
+- `app/ops/` — операционный CLI-слой (`cli.py`, `menu.py`, `status_ops.py`, `service_ops.py`, `smoke_ops.py`, `broadcast_ops.py`, `backup_ops.py`, `backup_planner_ops.py`, `alerts_ops.py`, `monitor_ops.py`, `systemd_units.py`);
 - `app/webapp/`:
   - `api.py` — HTTP endpoint'ы и сборка `aiohttp` app;
   - `auth.py` — валидация Telegram initData и auth-context;
