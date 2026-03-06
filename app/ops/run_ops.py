@@ -42,6 +42,40 @@ def _is_process_alive(pid: int) -> bool:
     return True
 
 
+def _read_process_cmdline(pid: int) -> str | None:
+    proc_cmdline = Path("/proc") / str(pid) / "cmdline"
+    try:
+        raw = proc_cmdline.read_bytes()
+    except OSError:
+        raw = b""
+    if raw:
+        return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+
+    result = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="],
+        cwd=str(ROOT_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    value = (result.stdout or "").strip()
+    return value or None
+
+
+def _pid_matches_component(pid: int, component: str) -> bool:
+    cmdline = _read_process_cmdline(pid)
+    if not cmdline:
+        return False
+    normalized_cmdline = cmdline.lower()
+    expected_cmd = _resolve_component(component)
+    markers = [Path(arg).name.lower() for arg in expected_cmd[1:] if arg.strip()]
+    if not markers:
+        return True
+    return all(marker in normalized_cmdline for marker in markers)
+
+
 def _read_pid(component: str) -> int | None:
     path = _pid_path(component)
     if not path.exists():
@@ -60,6 +94,9 @@ def _clear_stale_pid(component: str) -> None:
         path.unlink(missing_ok=True)
         return
     if not _is_process_alive(pid):
+        path.unlink(missing_ok=True)
+        return
+    if not _pid_matches_component(pid, component):
         path.unlink(missing_ok=True)
 
 

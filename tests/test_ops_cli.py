@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import sys
 import tempfile
@@ -97,7 +98,7 @@ class CliPlannerAndAlertsTests(unittest.TestCase):
     def test_cli_monitor_check_notify(self, mocked_monitor):
         code = cli.main(["monitor", "check", "--notify"])
         self.assertEqual(code, 0)
-        mocked_monitor.assert_called_once_with(notify=True)
+        mocked_monitor.assert_called_once_with(notify=True, scope="user")
 
     @patch("app.ops.cli.monitor_ops.install_event_alerts")
     def test_cli_monitor_events_enable(self, mocked_install):
@@ -206,6 +207,22 @@ class RunOpsTests(unittest.TestCase):
                     self.assertTrue(stopped)
                     running_after, _, _ = run_ops.get_component_background_status("test")
                     self.assertFalse(running_after)
+
+    def test_stop_ignores_pid_of_another_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pid_dir = tmp_path / "pids"
+            log_dir = tmp_path / "logs"
+            components = {"test": [sys.executable, "-c", "import time; time.sleep(30)"]}
+
+            with patch.object(run_ops, "PID_DIR", pid_dir), patch.object(
+                run_ops, "LOG_DIR", log_dir
+            ), patch.object(run_ops, "RUN_COMPONENTS", components):
+                pid_dir.mkdir(parents=True, exist_ok=True)
+                (pid_dir / "test.pid").write_text(str(os.getpid()), encoding="utf-8")
+                stopped = run_ops.stop_component_background("test", force=False)
+                self.assertFalse(stopped)
+                self.assertFalse((pid_dir / "test.pid").exists())
 
 
 if __name__ == "__main__":

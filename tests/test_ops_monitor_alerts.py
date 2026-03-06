@@ -49,26 +49,22 @@ class MonitorOpsTests(unittest.TestCase):
             self.assertEqual(mocked_send.call_count, 1)
 
     @patch("app.ops.monitor_ops.status_ops.collect_process_statuses")
-    @patch("app.ops.monitor_ops.status_ops.collect_systemd_statuses")
+    @patch("app.ops.monitor_ops._unit_active_state")
     @patch("app.ops.monitor_ops.backup_ops.disk_guardrail_status")
     @patch("app.ops.monitor_ops._is_failed_unit")
     def test_collect_incidents_when_everything_ok(
         self,
         mocked_failed,
         mocked_disk,
-        mocked_systemd,
+        mocked_unit_active,
         mocked_processes,
     ):
         mocked_processes.return_value = {"bot": ["pid"], "webapp": ["pid"], "notifications": [], "cloudflared": []}
-        mocked_systemd.return_value = {
-            "bot": ("active", "enabled", "telegram_bot.service", "system"),
-            "webapp": ("active", "enabled", "telegram_webapp.service", "system"),
-            "notify-timer": ("active", "enabled", "telegram_bot_notify.timer", "user"),
-        }
+        mocked_unit_active.return_value = "active"
         mocked_disk.return_value = ("ok", "ok", 100, 1000, 10.0)
         mocked_failed.return_value = False
 
-        incidents = monitor_ops.collect_incidents()
+        incidents = monitor_ops.collect_incidents(scope="user")
         self.assertEqual(incidents, [])
 
     def test_parse_units_argument_with_alias(self):

@@ -335,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "monitor":
         if args.action == "check":
-            return monitor_ops.run_monitor_check(notify=args.notify)
+            return monitor_ops.run_monitor_check(notify=args.notify, scope=args.scope)
         if args.action == "schedule-enable":
             if args.interval < 1:
                 print("Ошибка: --interval должен быть >= 1.")

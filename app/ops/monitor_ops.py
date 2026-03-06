@@ -156,14 +156,37 @@ def _is_failed_unit(unit_name: str, scope: str = "user") -> bool:
     return value == "failed"
 
 
-def collect_incidents() -> list[Incident]:
+def _unit_active_state(unit_name: str, scope: str = "user") -> str:
+    if not has_systemctl():
+        return "unknown"
+    cmd = ["systemctl"]
+    if scope == "user":
+        cmd.append("--user")
+    cmd.extend(["is-active", unit_name])
+    result = subprocess.run(
+        cmd,
+        cwd=None,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    value = (result.stdout or "").strip()
+    return value or "unknown"
+
+
+def collect_incidents(scope: str = "user") -> list[Incident]:
+    actual_scope = resolve_scope(scope)
     incidents: list[Incident] = []
     processes = status_ops.collect_process_statuses()
-    systemd_status = status_ops.collect_systemd_statuses()
+
+    bot_unit = SERVICE_TARGETS["bot"][0]
+    webapp_unit = SERVICE_TARGETS["webapp"][0]
+    notify_timer_unit = SERVICE_TARGETS["notify-timer"][0]
 
     for target in ("bot", "webapp"):
         process_ok = bool(processes.get(target))
-        active, _enabled, _unit, _scope = systemd_status.get(target, ("unknown", "unknown", "", ""))
+        unit_name = bot_unit if target == "bot" else webapp_unit
+        active = _unit_active_state(unit_name, scope=actual_scope)
         service_ok = active == "active"
         if not (process_ok or service_ok):
             incidents.append(
@@ -174,13 +197,13 @@ def collect_incidents() -> list[Incident]:
                 )
             )
 
-    notify_timer = systemd_status.get("notify-timer")
-    if notify_timer and notify_timer[0] != "active":
+    notify_timer_state = _unit_active_state(notify_timer_unit, scope=actual_scope)
+    if notify_timer_state != "active":
         incidents.append(
             Incident(
                 severity="warning",
                 source="notify-timer",
-                message=f"timer имеет состояние {notify_timer[0]} (ожидалось active).",
+                message=f"timer имеет состояние {notify_timer_state} (ожидалось active).",
             )
         )
 
@@ -194,7 +217,7 @@ def collect_incidents() -> list[Incident]:
             )
         )
 
-    if _is_failed_unit(BACKUP_SERVICE_UNIT, scope="user"):
+    if _is_failed_unit(BACKUP_SERVICE_UNIT, scope=actual_scope):
         incidents.append(
             Incident(
                 severity="critical",
@@ -203,7 +226,7 @@ def collect_incidents() -> list[Incident]:
             )
         )
 
-    if _is_failed_unit(MONITOR_SERVICE_UNIT, scope="user"):
+    if _is_failed_unit(MONITOR_SERVICE_UNIT, scope=actual_scope):
         incidents.append(
             Incident(
                 severity="warning",
@@ -267,8 +290,8 @@ def _send_notifications_if_needed(incidents: list[Incident]) -> None:
     _save_state({"mode": "ok", "last_incidents_hash": ""})
 
 
-def run_monitor_check(notify: bool = False) -> int:
-    incidents = collect_incidents()
+def run_monitor_check(notify: bool = False, scope: str = "user") -> int:
+    incidents = collect_incidents(scope=scope)
     if not incidents:
         print(colorize("Monitor: OK (инциденты не обнаружены).", "green"))
         if notify:
