@@ -1,22 +1,23 @@
-import asyncio
 from collections import defaultdict
 
 from aiogram import Bot
 
-from config import TOKEN
-from database import init_db
-from db_repo import (
-    get_admins,
+from app.repositories.absences_repo import list_pending_absences
+from app.repositories.groups_repo import (
     get_group_admins,
-    get_user_fullname,
     get_group_name,
+    list_all_groups,
+    list_pending_group_requests,
+)
+from app.repositories.users_repo import (
+    get_admins,
     get_superadmin_group_notification_ids,
     get_superadmin_notification_mode,
-    list_all_groups,
-    list_pending_absences,
-    list_pending_group_requests,
+    get_user_fullname,
     list_pending_user_ids,
 )
+from database import init_db
+from settings import TOKEN
 
 
 def build_group_admin_notifications() -> dict[int, str]:
@@ -116,7 +117,10 @@ async def send_daily_notifications() -> None:
 
 
 def main() -> None:
-    asyncio.run(send_daily_notifications())
+    # Thin wrapper for backward compatibility with "python notifications.py".
+    from app.entrypoints.notifications_main import main as run_main
+
+    run_main()
 
 
 if __name__ == "__main__":

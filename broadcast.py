@@ -4,16 +4,10 @@ import sys
 
 from aiogram import Bot
 
-from config import TOKEN
+from app.config.settings import read_required_secret
+from app.repositories.groups_repo import get_group_members, get_group_name, list_all_groups
+from app.repositories.users_repo import get_admins, get_all_users, get_approved_users
 from database import init_db
-from db_repo import (
-    get_admins,
-    get_all_users,
-    get_approved_users,
-    get_group_members,
-    get_group_name,
-    list_all_groups,
-)
 
 
 def _parse_group_audience(audience: str) -> int | None:
@@ -105,7 +99,7 @@ async def _send_broadcast(
     text: str,
     delay_sec: float,
 ) -> tuple[int, list[tuple[int, str]]]:
-    bot = Bot(token=TOKEN)
+    bot = Bot(token=read_required_secret("TOKEN"))
     sent = 0
     failures: list[tuple[int, str]] = []
     try:
@@ -152,6 +146,13 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _preview_text(text: str, limit: int = 700) -> str:
+    normalized = text.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip() + "\n... [обрезано]"
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -176,6 +177,9 @@ def main() -> int:
 
     print(f"Audience: {args.audience}")
     print(f"Получателей: {len(recipients)}")
+    print("--- Текст сообщения (preview) ---")
+    print(_preview_text(text))
+    print("--- Конец preview ---")
     if recipients:
         preview = ", ".join(str(x) for x in recipients[:15])
         if len(recipients) > 15:

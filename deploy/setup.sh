@@ -49,26 +49,19 @@ systemctl --user enable --now telegram_bot_notify.timer
 
 if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
   SERVICE_PATH="/etc/systemd/system/telegram_bot.service"
+  ENV_DIR="/etc/telegram_bot"
+  ENV_PATH="$ENV_DIR/telegram_bot.env"
+  SERVICE_TEMPLATE="$ROOT/deploy/systemd/telegram_bot.service.example"
+  ENV_TEMPLATE="$ROOT/deploy/env/telegram_bot.env.example"
   if [ -f "$SERVICE_PATH" ] && [ "$FORCE_SERVICE" -ne 1 ]; then
     echo "telegram_bot.service exists; skipping (use --force-service to overwrite)."
   else
-    sudo tee "$SERVICE_PATH" >/dev/null <<EOF
-[Unit]
-Description=Telegram Bot
-After=network.target
-
-[Service]
-User=$USER
-Group=$USER
-WorkingDirectory=$ROOT
-ExecStart=$VENV_DIR/bin/python $ROOT/bot.py
-Restart=always
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    sudo install -d -m 755 "$ENV_DIR"
+    if [ ! -f "$ENV_PATH" ]; then
+      sudo install -m 600 -o "$USER" -g "$USER" "$ENV_TEMPLATE" "$ENV_PATH"
+      echo "Created $ENV_PATH from template. Update TOKEN before production use."
+    fi
+    sed "s/%i/$USER/g" "$SERVICE_TEMPLATE" | sudo tee "$SERVICE_PATH" >/dev/null
     sudo systemctl daemon-reload
     sudo systemctl enable --now telegram_bot
   fi

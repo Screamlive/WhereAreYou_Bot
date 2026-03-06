@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily notifications at 09:00 MSK (user)
+Description=Daily notifications at 09:00 local time (user)
 
 [Timer]
 OnCalendar=*-*-* 09:00:00

@@ -15,7 +15,6 @@ from aiogram.types import (
 )
 
 from core import (
-    get_admin_groups,
     get_admin_scope,
     get_group_scope,
     get_role_menu,
@@ -24,30 +23,61 @@ from core import (
     user_is_group_admin_any,
     user_is_group_viewer_any,
 )
-from db_repo import (
-    log_action,
-    user_exists_in_db,
-    is_user_approved,
-    get_admin_notification_recipients,
-    get_superadmin_group_notification_ids,
-    get_user_groups,
-    get_group_members,
-    get_approved_users,
-    get_user_fullname,
-    user_in_group,
+from app.repositories.absences_repo import (
     create_absence,
-    list_user_absences,
-    get_absence_by_id,
-    update_absence,
-    update_absence_status,
-    delete_absence,
-    list_pending_absences,
-    list_overlapping_absences,
     create_edit_request,
-    get_edit_request,
+    delete_absence,
     delete_edit_request,
+    get_absence_by_id,
+    get_edit_request,
     list_approved_absences_between,
     list_approved_absences_for_date,
+    list_pending_absences,
+    list_user_absences,
+    update_absence,
+    update_absence_status,
+)
+from app.repositories.groups_repo import (
+    get_group_members,
+    user_in_group,
+)
+from app.repositories.logs_repo import log_action
+from app.use_cases.absence_overlaps import (
+    collect_overlaps_for_admin,
+    collect_overlaps_for_requester,
+    get_absence_recipients,
+)
+from app.use_cases.absence_moderation import (
+    build_absence_decision,
+    build_delete_decision,
+    build_edit_approve_admin_text,
+    build_edit_approve_user_text,
+    build_edit_request_admin_text,
+)
+from app.use_cases.absence_exports import (
+    build_absence_export_csv_text,
+    build_absence_export_filename,
+    build_today_absences_report,
+)
+from app.use_cases.absence_requests import (
+    build_added_for_another_text,
+    build_admin_request_submitted_text,
+    build_target_user_added_text,
+    build_user_request_submitted_text,
+    normalize_comment,
+)
+from app.use_cases.absence_views import (
+    build_admin_delete_absences_report,
+    build_admin_edit_absence_label,
+    build_admin_edit_current_text,
+    build_my_absences_report,
+    build_user_absences_report,
+)
+from app.repositories.users_repo import (
+    get_approved_users,
+    get_user_fullname,
+    is_user_approved,
+    user_exists_in_db,
 )
 from texts import (
     TEXT_NOT_REGISTERED_SHORT,
@@ -87,157 +117,15 @@ from utils import format_date_display
 router = Router()
 bot: Bot | None = None
 
+# Backward-compatible aliases for tests and transitional imports.
+_collect_overlaps_for_admin = collect_overlaps_for_admin
+_collect_overlaps_for_requester = collect_overlaps_for_requester
+_get_absence_recipients = get_absence_recipients
+
 
 def set_bot(bot_instance: Bot) -> None:
     global bot
     bot = bot_instance
-
-
-OVERLAP_ITEMS_LIMIT = 10
-
-
-def _format_overlap_rows(
-    rows: list[tuple],
-    limit: int | None = OVERLAP_ITEMS_LIMIT,
-    add_tail: bool = True,
-) -> list[str]:
-    if limit is None:
-        visible_rows = rows
-    else:
-        visible_rows = rows[:limit]
-
-    lines: list[str] = []
-    for row in visible_rows:
-        (_abs_id, _uid, category, sd, ed, _comment, status, fullname, username) = row
-        name = f"{fullname} (@{username})" if username else fullname
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        lines.append(f"{name} — {category} {sd_disp}–{ed_disp} ({status})")
-    remaining = len(rows) - len(visible_rows)
-    if add_tail and remaining > 0:
-        lines.append(f"…и ещё {remaining}")
-    return lines
-
-
-def _build_group_overlap_sections(
-    group_rows: list[tuple[str, list[tuple]]],
-    limit: int | None = OVERLAP_ITEMS_LIMIT,
-    add_tail: bool = True,
-) -> str | None:
-    sections: list[str] = []
-    for group_name, rows in group_rows:
-        if not rows:
-            continue
-        lines = _format_overlap_rows(rows, limit=limit, add_tail=add_tail)
-        sections.append(f"Группа «{group_name}»:\n" + "\n".join(lines))
-    if not sections:
-        return None
-    return "\n\n".join(sections)
-
-
-def _collect_overlaps_for_user_groups(
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid, gname, _role in get_user_groups(target_user_id):
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((gname, rows))
-    return _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-
-
-def _collect_overlaps_for_requester(
-    requester_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    if is_superadmin(requester_id):
-        return _collect_overlaps_for_superadmin_scope(
-            requester_id,
-            target_user_id,
-            start_date,
-            end_date,
-            full=full,
-        )
-    return _collect_overlaps_for_user_groups(target_user_id, start_date, end_date, full=full)
-
-
-def _collect_overlaps_for_superadmin_scope(
-    superadmin_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    scope_group_ids = get_superadmin_group_notification_ids(superadmin_id)
-
-    if scope_group_ids is None:
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=None)
-        if not rows:
-            return None
-        lines = _format_overlap_rows(rows, limit=limit, add_tail=not full)
-        return "Пересечения по всем пользователям:\n" + "\n".join(lines)
-
-    if not scope_group_ids:
-        return None
-
-    target_group_names = {gid: name for gid, name, _role in get_user_groups(target_user_id)}
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid in scope_group_ids:
-        if gid not in target_group_names:
-            continue
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((target_group_names[gid], rows))
-
-    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-    if not sections:
-        return None
-    return "Пересечения по фильтру суперадмина:\n\n" + sections
-
-
-def _collect_overlaps_for_admin(
-    admin_id: int,
-    target_user_id: int,
-    start_date: str,
-    end_date: str,
-    full: bool = False,
-) -> str | None:
-    if is_superadmin(admin_id):
-        return _collect_overlaps_for_superadmin_scope(
-            admin_id,
-            target_user_id,
-            start_date,
-            end_date,
-            full=full,
-        )
-
-    limit = None if full else OVERLAP_ITEMS_LIMIT
-    admin_groups = get_admin_groups(admin_id)
-    if not admin_groups:
-        return None
-
-    target_group_names = {gid: name for gid, name, _role in get_user_groups(target_user_id)}
-    group_rows: list[tuple[str, list[tuple]]] = []
-    for gid, gname in admin_groups:
-        if gid not in target_group_names:
-            continue
-        rows = list_overlapping_absences(start_date, end_date, target_user_id, group_id=gid)
-        group_rows.append((gname, rows))
-    sections = _build_group_overlap_sections(group_rows, limit=limit, add_tail=not full)
-    if not sections:
-        return None
-    return "Пересечения по группе:\n\n" + sections
-
-
-def _get_absence_recipients(target_user_id: int) -> set[int]:
-    group_ids = [gid for gid, _name, _role in get_user_groups(target_user_id)]
-    return set(get_admin_notification_recipients(group_ids))
 
 
 async def _send_long_message(chat_id: int, text: str, reply_markup=None) -> None:
@@ -278,7 +166,7 @@ async def _send_admin_request_with_overlaps(
     await _send_long_message(admin_id, base_text, reply_markup=reply_markup)
 
     # 2) Второе сообщение — пересечения (если есть), полным списком.
-    overlaps_full = _collect_overlaps_for_admin(
+    overlaps_full = collect_overlaps_for_admin(
         admin_id,
         target_user_id,
         start_date,
@@ -392,19 +280,14 @@ async def process_end_date(message: types.Message, state: FSMContext):
 @router.message(AbsenceRequestFSM.waiting_for_comment)
 async def process_comment(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     cat = data["category"]
     sd = data["start_date"]
     ed = data["end_date"]
     await state.update_data(comment=comment)
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
-    overlaps_text = _collect_overlaps_for_requester(user_id, user_id, sd, ed)
+    overlaps_text = collect_overlaps_for_requester(user_id, user_id, sd, ed)
     if overlaps_text:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -424,13 +307,12 @@ async def process_comment(message: types.Message, state: FSMContext):
     abs_id = create_absence(user_id, cat, sd, ed, comment, "pending")
 
     await message.answer(
-        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd_disp} по {ed_disp}\n"
-        f"Комментарий: {comment or '—'}\nОтправлена на рассмотрение."
+        build_user_request_submitted_text(abs_id, cat, sd, ed, comment)
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
     # Уведомим админов групп пользователя и суперадминов (с учетом фильтра суперадмина).
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -438,10 +320,13 @@ async def process_comment(message: types.Message, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id}:\n"
-            f"{cat} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            cat,
+            sd,
+            ed,
+            comment,
         )
         try:
             await _send_admin_request_with_overlaps(
@@ -479,16 +364,12 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
     comment = data.get("comment", "")
 
     abs_id = create_absence(user_id, cat, sd, ed, comment, "pending")
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
     await cb.message.answer(
-        f"Заявка #{abs_id} на отсутствие '{cat}' с {sd_disp} по {ed_disp}\n"
-        f"Комментарий: {comment or '—'}\nОтправлена на рассмотрение."
+        build_user_request_submitted_text(abs_id, cat, sd, ed, comment)
     )
     log_action(user_id, f"Requested absence {abs_id}: {cat} {sd}-{ed}")
 
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -496,10 +377,13 @@ async def process_overlap_confirm(cb: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id}:\n"
-            f"{cat} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            cat,
+            sd,
+            ed,
+            comment,
         )
         try:
             await _send_admin_request_with_overlaps(
@@ -547,13 +431,8 @@ async def show_my_absences(message: types.Message):
         await message.answer("У вас нет заявок на отсутствие.")
         return
 
-    lines = []
     kb_rows = []
-    for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        line = f"#{abs_id} — {cat}, {sd_disp}–{ed_disp}, статус={st}, коммент: {cmnt or '—'}"
-        lines.append(line)
+    for (abs_id, _cat, _sd, _ed, _cmnt, st) in rows:
         if st == "approved":
             kb_rows.append([
                 InlineKeyboardButton(
@@ -566,7 +445,7 @@ async def show_my_absences(message: types.Message):
                 )
             ])
 
-    text_report = "Ваши заявки:\n" + "\n".join(lines)
+    text_report = build_my_absences_report(rows)
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
 
     await message.answer(text_report, reply_markup=inline_kb)
@@ -609,7 +488,7 @@ async def request_delete_absence(cb: CallbackQuery):
         return
 
     # Отправим запрос админам групп пользователя и суперадминам (с учетом фильтра суперадмина).
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     sd_disp = format_date_display(sd)
     ed_disp = format_date_display(ed)
     for admin_id in admin_ids:
@@ -715,9 +594,7 @@ async def edit_absence_end_date(message: types.Message, state: FSMContext):
 
 @router.message(EditAbsenceFSM.waiting_for_new_comment)
 async def edit_absence_comment(message: types.Message, state: FSMContext):
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     abs_id = data["abs_id"]
@@ -732,32 +609,22 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         return
 
     _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
-    old_sd_disp = format_date_display(old_sd)
-    old_ed_disp = format_date_display(old_ed)
-    new_sd_disp = format_date_display(new_sd)
-    new_ed_disp = format_date_display(new_ed)
 
     req_id = create_edit_request(abs_id, new_cat, new_sd, new_ed, comment, user_id)
-
-    old_part = (
-        f"Старое:\n"
-        f"Категория: {old_cat}\n"
-        f"Даты: {old_sd_disp}–{old_ed_disp}\n"
-        f"Комментарий: {old_cmnt or '—'}\n\n"
-    )
-    new_part = (
-        f"Новое:\n"
-        f"Категория: {new_cat}\n"
-        f"Даты: {new_sd_disp}–{new_ed_disp}\n"
-        f"Комментарий: {comment or '—'}\n\n"
-        f"(pending)"
-    )
-    text_admin = (
-        f"Пользователь {get_user_fullname(user_id)} хочет изменить заявку #{abs_id}.\n\n"
-        f"{old_part}{new_part}"
+    text_admin = build_edit_request_admin_text(
+        requester_fullname=get_user_fullname(user_id),
+        absence_id=abs_id,
+        old_category=old_cat,
+        old_start_date=old_sd,
+        old_end_date=old_ed,
+        old_comment=old_cmnt,
+        new_category=new_cat,
+        new_start_date=new_sd,
+        new_end_date=new_ed,
+        new_comment=comment,
     )
 
-    overlaps_for_user = _collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
+    overlaps_for_user = collect_overlaps_for_requester(user_id, user_id, new_sd, new_ed, full=True)
 
     await message.answer(
         f"Запрос на изменение заявки #{abs_id} отправлен на одобрение администратору.\n"
@@ -771,7 +638,7 @@ async def edit_absence_comment(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="Одобрить", callback_data=f"approve_edit:{req_id}"),
         InlineKeyboardButton(text="Отклонить", callback_data=f"decline_edit:{req_id}")
     ]])
-    admin_ids = _get_absence_recipients(user_id)
+    admin_ids = get_absence_recipients(user_id)
     for admin_id in admin_ids:
         try:
             await _send_admin_request_with_overlaps(
@@ -822,33 +689,34 @@ async def edit_approval_callback(cb: CallbackQuery):
         await cb.answer()
         return
     _old_user_id, old_cat, old_sd, old_ed, old_cmnt, _old_status = old_row
-    old_sd_disp = format_date_display(old_sd)
-    old_ed_disp = format_date_display(old_ed)
-    new_sd_disp = format_date_display(new_sd)
-    new_ed_disp = format_date_display(new_ed)
 
     if action == "approve_edit":
         update_absence(abs_id, new_cat, new_sd, new_ed, new_comment)
         delete_edit_request(req_id)
 
-        old_text = (
-            f"Старое:\nКатегория: {old_cat}\n"
-            f"Даты: {old_sd_disp}–{old_ed_disp}\n"
-            f"Комментарий: {old_cmnt or '—'}"
+        summary = build_edit_approve_admin_text(
+            absence_id=abs_id,
+            old_category=old_cat,
+            old_start_date=old_sd,
+            old_end_date=old_ed,
+            old_comment=old_cmnt,
+            new_category=new_cat,
+            new_start_date=new_sd,
+            new_end_date=new_ed,
+            new_comment=new_comment,
         )
-        new_text = (
-            f"Новое:\nКатегория: {new_cat}\n"
-            f"Даты: {new_sd_disp}–{new_ed_disp}\n"
-            f"Комментарий: {new_comment or '—'}"
-        )
-        summary = f"Изменение заявки #{abs_id} одобрено.\n\n{old_text}\n\n→ {new_text}"
         await cb.message.answer(summary)
 
         try:
             await bot.send_message(
                 user_id,
-                f"Ваше изменение заявки #{abs_id} одобрено!\n"
-                f"Теперь: {new_cat}, {new_sd_disp}–{new_ed_disp}, {new_comment or '—'}"
+                build_edit_approve_user_text(
+                    absence_id=abs_id,
+                    new_category=new_cat,
+                    new_start_date=new_sd,
+                    new_end_date=new_ed,
+                    new_comment=new_comment,
+                )
             )
         except Exception:
             pass
@@ -891,26 +759,18 @@ async def confirm_delete_absence(cb: CallbackQuery):
         return
 
     user_id, cat, sd, ed, _cmnt, _st = row
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
-    if action == "approve_del":
+    decision = build_delete_decision(action, abs_id, cat, sd, ed)
+    if decision.should_delete:
         delete_absence(abs_id)
-        await cb.message.answer(f"Удаление #{abs_id} одобрено. Запись удалена.")
-        log_action(admin_id, f"approve_del absence {abs_id}")
-        try:
-            await bot.send_message(user_id, f"Админ удалил вашу заявку #{abs_id}.")
-        except Exception:
-            pass
-    else:
-        await cb.message.answer(f"Удаление #{abs_id} отклонено.")
-        log_action(cb.from_user.id, f"decline_del absence {abs_id}")
-        try:
-            await bot.send_message(user_id, f"Админ отклонил удаление вашей заявки #{abs_id}.")
-        except Exception:
-            pass
+    await cb.message.answer(decision.admin_text)
+    log_action(admin_id, decision.log_text)
+    try:
+        await bot.send_message(user_id, decision.user_text)
+    except Exception:
+        pass
 
     await cb.answer()
 
@@ -994,24 +854,15 @@ async def callback_absence_approval(cb: CallbackQuery):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
 
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-    if action == "approve_abs":
-        new_status = "approved"
-        txt_admin = f"Заявка #{abs_id} одобрена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) одобрена!"
-    else:
-        new_status = "declined"
-        txt_admin = f"Заявка #{abs_id} отклонена."
-        txt_user = f"Ваша заявка #{abs_id} ({cat} {sd_disp}–{ed_disp}) отклонена."
+    decision = build_absence_decision(action, abs_id, cat, sd, ed)
 
-    update_absence_status(abs_id, new_status)
+    update_absence_status(abs_id, decision.new_status)
 
-    await cb.message.answer(txt_admin)
+    await cb.message.answer(decision.admin_text)
     log_action(admin_id, f"{action} absence {abs_id}")
 
     try:
-        await bot.send_message(user_id, txt_user)
+        await bot.send_message(user_id, decision.user_text)
     except Exception:
         pass
 
@@ -1089,11 +940,7 @@ async def cb_show_absences(cb: CallbackQuery):
         await cb.answer()
         return
 
-    text_report = f"Отсутствия {user_disp}:\n"
-    for (_abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        text_report += f"- {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
+    text_report = build_user_absences_report(user_disp, rows)
 
     await cb.message.answer(text_report)
     await cb.answer()
@@ -1169,12 +1016,9 @@ async def admin_delete_absences_pickuser(cb: CallbackQuery):
         await cb.answer()
         return
 
-    text_rep = f"Отсутствия {user_disp}:\n"
+    text_rep = build_admin_delete_absences_report(user_disp, rows)
     kb_rows = []
-    for (abs_id, cat, sd, ed, cmnt, st) in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        text_rep += f"#{abs_id} {cat} {sd_disp}–{ed_disp}, [{st}], {cmnt or '—'}\n"
+    for (abs_id, _cat, _sd, _ed, _cmnt, _st) in rows:
         kb_rows.append([InlineKeyboardButton(
             text=f"Удалить #{abs_id}",
             callback_data=f"adm_del_abs:{abs_id}"
@@ -1324,10 +1168,8 @@ async def admin_edit_absence_pick_user(cb: CallbackQuery, state: FSMContext):
 
     await state.update_data(target_user_id=user_id)
     kb_rows = []
-    for abs_id, cat, sd, ed, cmnt, st in rows:
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        label = f"#{abs_id} {cat} {sd_disp}–{ed_disp} [{st}]"
+    for abs_id, cat, sd, ed, _cmnt, st in rows:
+        label = build_admin_edit_absence_label(abs_id, cat, sd, ed, st)
         kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"adm_edit_abs:{abs_id}")])
     inline_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await cb.message.answer("Выберите заявку для изменения:", reply_markup=inline_kb)
@@ -1358,8 +1200,6 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
         return
 
     target_user_id, cat, sd, ed, cmnt, st = row
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
     if group_id and not user_in_group(target_user_id, group_id):
         await cb.answer(TEXT_NO_RIGHTS_ALERT, show_alert=True)
         return
@@ -1376,11 +1216,7 @@ async def admin_edit_absence_pick_absence(cb: CallbackQuery, state: FSMContext):
             InlineKeyboardButton(text="Другое", callback_data="adm_edit_cat_other"),
         ]
     ])
-    await cb.message.answer(
-        f"Текущие данные: {cat} {sd_disp}–{ed_disp}, коммент: {cmnt or '—'}, статус={st}\n"
-        f"Выберите новую категорию (можно выбрать ту же):",
-        reply_markup=kb
-    )
+    await cb.message.answer(build_admin_edit_current_text(cat, sd, ed, cmnt, st), reply_markup=kb)
     await state.set_state(AdminEditAbsenceFSM.waiting_for_category)
     await cb.answer()
 
@@ -1572,23 +1408,12 @@ async def csv_export_end_date(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    lines = ["fullname;username;category;start_date;end_date;comment"]
-    for (_uid, cat, sd, ed, cmnt, fname, uname) in rows:
-        cmnt_esc = (cmnt or "").replace(";", ",")
-        if uname:
-            user_str = f"{fname} (@{uname})"
-        else:
-            user_str = f"{fname}"
-        sd_disp = format_date_display(sd)
-        ed_disp = format_date_display(ed)
-        lines.append(f"{user_str};{uname or ''};{cat};{sd_disp};{ed_disp};{cmnt_esc}")
-
-    csv_text = "\n".join(lines)
+    csv_text = build_absence_export_csv_text(rows)
     bom = b'\xef\xbb\xbf'
     csv_bytes = bom + csv_text.encode('utf-8')
     buf = BytesIO(csv_bytes)
     buf.seek(0)
-    input_file = BufferedInputFile(buf.getvalue(), filename=f"absences_{sds_disp}_{eds_disp}.csv")
+    input_file = BufferedInputFile(buf.getvalue(), filename=build_absence_export_filename(sds, eds))
 
     await message.answer_document(document=input_file, caption="CSV-выгрузка.")
 
@@ -1624,16 +1449,7 @@ async def show_absences_today(message: types.Message):
         await message.answer(f"На сегодня ({today_display}) нет одобренных отсутствий.")
         return
 
-    lines = []
-    for (_uid, category, sd, ed, cmnt, fullname, _username) in rows:
-        start_disp = format_date_display(sd)
-        end_disp = format_date_display(ed)
-        user_str = fullname
-        comment_str = cmnt if cmnt else "—"
-        line = f"{user_str} ({category}, {start_disp} - {end_disp}), комментарий: {comment_str}"
-        lines.append(line)
-
-    result_text = f"Отсутствия на сегодня ({today_display}):\n\n" + "\n\n".join(lines)
+    result_text = build_today_absences_report(today_display, rows)
     await message.answer(result_text)
 
     log_action(message.from_user.id, f"Выгрузка за сегодня: {today_display}")
@@ -1776,27 +1592,28 @@ async def another_absence_end_date(message: types.Message, state: FSMContext):
 
 @router.message(AddAbsenceForAnotherFSM.waiting_for_comment)
 async def another_absence_comment(message: types.Message, state: FSMContext):
-    comment = message.text.strip()
-    if comment == "-":
-        comment = ""
+    comment = normalize_comment(message.text)
 
     data = await state.get_data()
     target_user_id = data["target_user_id"]
     category = data["category"]
     sd = data["start_date"]
     ed = data["end_date"]
-    sd_disp = format_date_display(sd)
-    ed_disp = format_date_display(ed)
-
     abs_id = create_absence(target_user_id, category, sd, ed, comment, "pending")
 
     await message.answer(
-        f"Отсутствие #{abs_id} добавлено пользователю {get_user_fullname(target_user_id)}.\n"
-        f"Категория: {category}, {sd_disp}–{ed_disp}\nКомментарий: {comment or '—'}\nСтатус: pending."
+        build_added_for_another_text(
+            abs_id,
+            get_user_fullname(target_user_id),
+            category,
+            sd,
+            ed,
+            comment,
+        )
     )
     log_action(message.from_user.id, f"AddAbsForAnother user={target_user_id}, abs_id={abs_id}")
 
-    overlaps_text = _collect_overlaps_for_requester(message.from_user.id, target_user_id, sd, ed)
+    overlaps_text = collect_overlaps_for_requester(message.from_user.id, target_user_id, sd, ed)
     if overlaps_text:
         await message.answer(
             "Внимание: найдено пересечение с отсутствиями других пользователей:\n\n"
@@ -1806,15 +1623,14 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
     try:
         await bot.send_message(
             target_user_id,
-            f"Вам добавлено отсутствие #{abs_id} ({category}, {sd_disp}–{ed_disp}) от другого пользователя.\n"
-            f"Комментарий: {comment or '—'}\n(статус: pending)"
+            build_target_user_added_text(abs_id, category, sd, ed, comment)
         )
     except Exception:
         pass
 
     user_id = message.from_user.id
 
-    admin_ids = _get_absence_recipients(target_user_id)
+    admin_ids = get_absence_recipients(target_user_id)
     for admin_id in admin_ids:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -1822,11 +1638,14 @@ async def another_absence_comment(message: types.Message, state: FSMContext):
                 InlineKeyboardButton(text="Отклонить", callback_data=f"decline_abs:{abs_id}")
             ]
         ])
-        text_admin = (
-            f"{get_user_fullname(user_id)} добавил заявку #{abs_id} "
-            f"ДЛЯ {get_user_fullname(target_user_id)}:\n"
-            f"{category} {sd_disp}–{ed_disp}\n"
-            f"Комментарий: {comment or '—'} (pending)"
+        text_admin = build_admin_request_submitted_text(
+            get_user_fullname(user_id),
+            abs_id,
+            category,
+            sd,
+            ed,
+            comment,
+            target_fullname=get_user_fullname(target_user_id),
         )
         try:
             await _send_admin_request_with_overlaps(

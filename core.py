@@ -5,13 +5,12 @@ if TYPE_CHECKING:
 else:
     ReplyKeyboardMarkup = Any
 
-from db_repo import (
-    get_user_groups,
+from app.repositories.groups_repo import get_group_membership_role, get_group_name
+from app.repositories.users_repo import (
     get_last_group_id,
-    set_last_group_id,
-    get_group_name,
-    get_group_membership_role,
+    get_user_groups,
     is_user_admin,
+    set_last_group_id,
 )
 from keyboards import (
     build_superadmin_main_menu,

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhereAreYou — Пересечения</title>
+  <link rel="stylesheet" href="/webapp/static/styles.css?v=20260303-5">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <h1>Пересечения отсутствий</h1>
+        <p id="subtitle">Загрузка профиля...</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="export-xlsx-btn" type="button">Экспорт XLSX</button>
+        <button id="today-btn" type="button">Сегодня</button>
+        <button id="reload-btn" type="button">Обновить</button>
+      </div>
+    </header>
+
+    <section class="filters">
+      <label>
+        Scope
+        <select id="scope-select"></select>
+      </label>
+      <label id="group-label">
+        Группа
+        <select id="group-select"></select>
+      </label>
+      <label>
+        Год
+        <input id="year-input" type="number" min="2000" max="2100" step="1">
+      </label>
+      <label>
+        Период
+        <select id="preset-select">
+          <option value="current_year">Текущий год</option>
+          <option value="current_month">Текущий месяц</option>
+          <option value="next_90_days">Следующие 90 дней</option>
+        </select>
+      </label>
+      <label>
+        Плотность
+        <select id="density-select">
+          <option value="detailed">Подробно</option>
+          <option value="compact">Компактно</option>
+        </select>
+      </label>
+      <label>
+        Конфликт от
+        <select id="conflict-threshold-select">
+          <option value="0">Выкл</option>
+          <option value="2" selected>&ge; 2</option>
+          <option value="3">&ge; 3</option>
+          <option value="4">&ge; 4</option>
+          <option value="5">&ge; 5</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="filters-extended">
+      <div class="filter-card">
+        <div class="filter-title">Статусы</div>
+        <label><input type="checkbox" name="status-filter" value="approved" checked> Одобрено</label>
+        <label><input type="checkbox" name="status-filter" value="pending" checked> На согласовании</label>
+        <label><input type="checkbox" name="status-filter" value="declined"> Отклонено</label>
+      </div>
+      <div class="filter-card">
+        <div class="filter-title">Категории</div>
+        <label><input type="checkbox" name="category-filter" value="vacation" checked> Отпуск</label>
+        <label><input type="checkbox" name="category-filter" value="sick" checked> Больничный</label>
+        <label><input type="checkbox" name="category-filter" value="dayoff" checked> DayOff</label>
+        <label><input type="checkbox" name="category-filter" value="other" checked> Другое</label>
+      </div>
+      <label class="search-box">
+        Поиск по сотруднику
+        <input id="search-input" type="text" placeholder="ФИО или @username">
+      </label>
+    </section>
+
+    <main>
+      <div id="status-line" class="status-line">Загрузка...</div>
+
+      <div id="timeline-wrap" class="timeline-wrap hidden">
+        <div class="timeline-head">
+          <div class="user-col sticky">Сотрудник</div>
+          <div id="months-row" class="months-row"></div>
+        </div>
+        <div id="timeline-body" class="timeline-body"></div>
+      </div>
+    </main>
+
+    <section id="details-modal" class="details-modal hidden" role="dialog" aria-modal="true" aria-labelledby="details-title">
+      <div id="details-backdrop" class="details-backdrop"></div>
+      <div class="details-card">
+        <div class="details-header">
+          <h2 id="details-title">Детали отсутствия</h2>
+          <button id="details-close-btn" type="button">Закрыть</button>
+        </div>
+        <div id="details-content" class="details-content">
+          Нажмите на интервал в таймлайне, чтобы увидеть точные даты и комментарий.
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/webapp/static/app.js?v=20260303-7"></script>
+</body>
+</html>

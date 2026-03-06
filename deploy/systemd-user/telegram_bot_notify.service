@@ -6,3 +6,4 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=%h/telegram_bot
 ExecStart=%h/telegram_bot/.venv/bin/python %h/telegram_bot/notifications.py
+EnvironmentFile=/etc/telegram_bot/telegram_bot.env
