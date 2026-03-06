@@ -67,6 +67,34 @@ class MonitorOpsTests(unittest.TestCase):
         incidents = monitor_ops.collect_incidents(scope="user")
         self.assertEqual(incidents, [])
 
+    @patch("app.ops.monitor_ops.status_ops.collect_process_statuses")
+    @patch("app.ops.monitor_ops._unit_active_state")
+    @patch("app.ops.monitor_ops.backup_ops.disk_guardrail_status")
+    @patch("app.ops.monitor_ops._is_failed_unit")
+    def test_collect_incidents_reports_nginx_when_enabled(
+        self,
+        mocked_failed,
+        mocked_disk,
+        mocked_unit_active,
+        mocked_processes,
+    ):
+        mocked_processes.return_value = {"bot": ["pid"], "webapp": ["pid"], "notifications": [], "cloudflared": []}
+        mocked_disk.return_value = ("ok", "ok", 100, 1000, 10.0)
+        mocked_failed.return_value = False
+
+        unit_states = {
+            "telegram_bot.service": "active",
+            "telegram_webapp.service": "active",
+            "telegram_bot_notify.timer": "active",
+            "nginx.service": "inactive",
+        }
+        mocked_unit_active.side_effect = lambda unit_name, scope="user": unit_states.get(unit_name, "active")
+
+        with patch.dict("os.environ", {"MONITOR_NGINX_ENABLED": "1", "MONITOR_NGINX_UNIT": "nginx.service"}):
+            incidents = monitor_ops.collect_incidents(scope="user")
+
+        self.assertTrue(any(item.source == "nginx" and item.severity == "critical" for item in incidents))
+
     def test_parse_units_argument_with_alias(self):
         units = monitor_ops._parse_units_argument("bot,webapp", scope="user")
         self.assertIn("telegram_bot.service", units)

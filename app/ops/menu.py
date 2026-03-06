@@ -317,6 +317,7 @@ def _menu_service() -> None:
             ("monitor-service", "monitor-service -> telegram_bot_monitor.service"),
             ("monitor-timer", "monitor-timer -> telegram_bot_monitor.timer"),
             ("cloudflared", "cloudflared -> cloudflared.service"),
+            ("nginx", "nginx -> nginx.service"),
         ],
         allow_back=True,
         back_label="Вернуться в главное меню",

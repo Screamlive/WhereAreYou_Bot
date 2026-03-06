@@ -385,6 +385,12 @@ python manage.py broadcast --audience approved --changelog-latest --confirm
 - `python manage.py monitor events-status --scope user|system [--units CSV]` — статус событийных алертов.
 - `python manage.py monitor events-disable --scope user|system [--units CSV]` — отключить событийные алерты.
 
+Опциональный мониторинг nginx:
+- в `config.py`:
+  - `MONITOR_NGINX_ENABLED = True` — включить проверку `nginx.service` в monitor check;
+  - `MONITOR_NGINX_UNIT = "..."` — переопределить имя unit (по умолчанию `nginx.service`).
+- env-переменные с теми же именами работают как override поверх `config.py`.
+
 ### Governance-команды
 
 - `python manage.py governance checks --branch main` — проверить release-gates

@@ -329,6 +329,12 @@ python manage.py alerts contacts add --id 123456789
 python manage.py alerts test --message "Тест тех-уведомлений"
 ```
 
+Опциональный мониторинг nginx в `monitor check`:
+- в `config.py`:
+  - `MONITOR_NGINX_ENABLED = True`
+  - `MONITOR_NGINX_UNIT = "nginx.service"` (или ваш unit)
+- переменные окружения с теми же именами работают как override, но не обязательны.
+
 Ежедневный операционный сценарий:
 ```
 # 1) Проверка состояния

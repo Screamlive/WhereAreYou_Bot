@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.config.settings import read_bool, read_str
 from app.ops import alerts_ops, backup_ops, status_ops
 from app.ops.common import PYTHON_BIN, ROOT_DIR, colorize
 from app.ops.service_ops import SERVICE_TARGETS
@@ -30,6 +31,15 @@ class Incident:
     severity: str  # critical | warning
     source: str
     message: str
+
+
+def _is_nginx_monitor_enabled() -> bool:
+    return read_bool("MONITOR_NGINX_ENABLED", False)
+
+
+def _nginx_unit_name() -> str:
+    value = read_str("MONITOR_NGINX_UNIT", "nginx.service").strip()
+    return value or "nginx.service"
 
 
 def _render_event_alert_template(scope: str) -> str:
@@ -234,6 +244,18 @@ def collect_incidents(scope: str = "user") -> list[Incident]:
                 message=f"{MONITOR_SERVICE_UNIT} в состоянии failed.",
             )
         )
+
+    if _is_nginx_monitor_enabled():
+        nginx_unit = _nginx_unit_name()
+        nginx_state = _unit_active_state(nginx_unit, scope="system")
+        if nginx_state != "active":
+            incidents.append(
+                Incident(
+                    severity="critical",
+                    source="nginx",
+                    message=f"{nginx_unit} имеет состояние {nginx_state} (ожидалось active).",
+                )
+            )
 
     return incidents
 

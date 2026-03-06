@@ -14,6 +14,7 @@ SERVICE_TARGETS = {
     "monitor-service": ("telegram_bot_monitor.service", "user"),
     "monitor-timer": ("telegram_bot_monitor.timer", "user"),
     "cloudflared": ("cloudflared.service", "system"),
+    "nginx": ("nginx.service", "system"),
 }
 
 SERVICE_ACTIONS = {
