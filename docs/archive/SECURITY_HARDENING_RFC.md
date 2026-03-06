@@ -1,7 +1,7 @@
 # RFC: Усиление безопасности бота и WebApp
 
 Дата: 2026-03-05  
-Статус: In Progress (остался внешний инфраструктурный шаг)
+Статус: Archived (выполнено по коду; операционный хвост перенесен в CLI RFC)
 
 ## Статус выполнения (на 2026-03-05)
 
@@ -20,7 +20,7 @@
 - [x] S4: CI workflow для security gate добавлен (`.github/workflows/security-gate.yml`).
 - [x] S4: добавлены шаблоны `EnvironmentFile` и systemd-шаблоны для секретов вне git.
 - [x] S4: секрет `TOKEN` переведен на централизованное чтение через `settings.py` (env-first, fail-fast).
-- [ ] S4: branch protection на `main` с обязательным check `security-gate`.
+- [ ] S4: branch protection на `main` с обязательным check `security-gate` (перенесено в `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`, итерация C5).
 
 ## 1) Цель
 
@@ -210,6 +210,9 @@ Telegram не дает “железного” transport-level маркера, 
 
 ## 8) Чеклист релиза (security)
 
+Примечание: это не backlog RFC, а операционный чеклист для каждого нового production-релиза.
+Пункты могут быть не отмечены в документе и подтверждаются по месту перед конкретным деплоем.
+
 - [ ] `WEBAPP_ALLOW_DEV_FALLBACK=0` в prod.
 - [ ] `WEBAPP_ALLOW_INITDATA_COMPAT=0` в prod.
 - [ ] `TOKEN` и прочие секреты не хранятся в репозитории.
@@ -236,14 +239,5 @@ headers и release-gate на security тестах.
 
 ## 11) Что осталось для полного закрытия RFC
 
-Единственный незавершенный пункт в рамках репозитория:  
-`branch protection` для `main` с обязательным статус-чеком `security-gate`.
-
-Минимальные шаги:
-1. GitHub -> Settings -> Rules -> Rulesets (или Branch protection).
-2. Target branch: `main`.
-3. Включить:
-   - `Require a pull request before merging`;
-   - `Require status checks to pass`.
-4. Добавить обязательный check: `security-gate`.
-5. Сохранить ruleset и проверить PR: merge блокируется при красном `security-gate`.
+Операционный шаг по branch protection перенесен в активный RFC:  
+`docs/rfc/OPERATIONS_CLI_PANEL_RFC.md` (итерация C5).

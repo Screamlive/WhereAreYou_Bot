@@ -292,7 +292,10 @@ python broadcast.py --audience approved --changelog-latest
 ## RFC и архив
 
 - Реализованный RFC по read-only WebApp перенесен в архив: `docs/archive/WEBAPP_READONLY_RFC.md`.
-- Новые этапы проектирования (безопасность, операционная CLI-панель) ведутся в `docs/rfc/`.
+- Закрытые RFC по безопасности и рефакторингу структуры перенесены в архив:
+  - `docs/archive/SECURITY_HARDENING_RFC.md`
+  - `docs/archive/PROJECT_STRUCTURE_REFACTOR_RFC.md`
+- Активный RFC текущего этапа: `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
 
 ## Карта модулей (актуальная)
 

@@ -331,7 +331,7 @@ python broadcast.py --audience approved --changelog-latest
 - Подробное описание функций и ролей — в `DOCUMENTATION.md`.
 - Короткий пользовательский changelog — в `CHANGELOG.md`.
 - Архив реализованных RFC — в `docs/archive/`.
-- Активные RFC по следующим этапам — в `docs/rfc/`.
+- Активный RFC текущего этапа — `docs/rfc/OPERATIONS_CLI_PANEL_RFC.md`.
 
 ## Структура проекта
 
