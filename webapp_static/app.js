@@ -209,46 +209,18 @@ function persistInitData(value, source) {
 }
 
 async function apiDownload(path, query = {}, fallbackFilename = "export.xlsx") {
-  const url = new URL(path, window.location.origin);
-  Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      url.searchParams.set(key, String(value));
-    }
-  });
+  const ticket = await apiGet("/webapp/v1/export/xlsx-ticket", query);
+  const downloadUrl = new URL(ticket.download_url || path, window.location.origin);
+  const absoluteUrl = downloadUrl.toString();
+  const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 
-  const headers = {};
-  if (state.initData) {
-    headers["X-Telegram-Init-Data"] = state.initData;
-    headers.Authorization = `tma ${state.initData}`;
-  } else if (state.devUserId) {
-    headers["X-Telegram-User-Id"] = state.devUserId;
+  if (tg && typeof tg.openLink === "function") {
+    tg.openLink(absoluteUrl, { try_instant_view: false });
+    return ticket.filename || fallbackFilename;
   }
 
-  const response = await fetch(url.toString(), { headers });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(formatError(body));
-  }
-
-  const blob = await response.blob();
-  let filename = fallbackFilename;
-  const contentDisposition = response.headers.get("Content-Disposition") || "";
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-  const simpleMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-  if (utf8Match?.[1]) {
-    filename = decodeURIComponent(utf8Match[1]);
-  } else if (simpleMatch?.[1]) {
-    filename = simpleMatch[1];
-  }
-
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
+  window.location.assign(absoluteUrl);
+  return ticket.filename || fallbackFilename;
 }
 
 function detectTelegramContext() {
@@ -830,11 +802,12 @@ async function refreshData() {
 async function exportCurrentViewXlsx() {
   try {
     statusLine.textContent = "Подготовка XLSX...";
-    await apiDownload("/webapp/v1/export/xlsx", currentScopeQuery(), "overlaps.xlsx");
+    const filename = await apiDownload("/webapp/v1/export/xlsx", currentScopeQuery(), "overlaps.xlsx");
     if (state.overlaps) {
       renderTimeline(state.overlaps);
+      statusLine.textContent = `XLSX выгрузка запущена: ${filename}`;
     } else {
-      statusLine.textContent = "XLSX выгружен.";
+      statusLine.textContent = `XLSX выгрузка запущена: ${filename}`;
     }
   } catch (error) {
     statusLine.textContent = `Ошибка экспорта: ${error.message}`;

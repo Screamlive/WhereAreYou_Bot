@@ -326,6 +326,7 @@ WebApp запускается как отдельный backend и открыв�
 - `GET /webapp`
 - `GET /webapp/v1/me`
 - `GET /webapp/v1/overlaps`
+- `GET /webapp/v1/export/xlsx-ticket`
 - `GET /webapp/v1/absence/{absence_id}`
 - `GET /webapp/v1/export/xlsx`
 

@@ -10,6 +10,7 @@ from app.webapp.api import (
     create_app,
     handle_absence,
     handle_export_xlsx,
+    handle_export_xlsx_ticket,
     handle_me,
     handle_overlaps,
     handle_webapp_index,
