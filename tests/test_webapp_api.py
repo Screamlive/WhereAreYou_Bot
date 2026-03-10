@@ -17,11 +17,13 @@ import database
 import db_repo
 import settings
 import webapp_api
+from app.webapp.downloads import clear_download_ticket_store
 from webapp_api import (
     _verify_telegram_init_data,
     create_app,
     handle_absence,
     handle_export_xlsx,
+    handle_export_xlsx_ticket,
     handle_me,
     handle_overlaps,
     handle_webapp_index,
@@ -37,6 +39,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         os.environ["WEBAPP_ALLOW_DEV_FALLBACK"] = "1"
         os.environ["WEBAPP_ALLOW_INITDATA_COMPAT"] = "1"
         webapp_api._clear_rate_limiter_state()
+        clear_download_ticket_store()
 
         fd, path = tempfile.mkstemp(prefix="bot_webapp_api_", suffix=".db")
         os.close(fd)
@@ -74,6 +77,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         else:
             os.environ["WEBAPP_RATE_LIMIT_WINDOW_SEC"] = self.prev_rate_limit_window
         webapp_api._clear_rate_limiter_state()
+        clear_download_ticket_store()
 
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
@@ -85,6 +89,7 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/webapp/static", paths)
         self.assertIn("/webapp/v1/me", paths)
         self.assertIn("/webapp/v1/overlaps", paths)
+        self.assertIn("/webapp/v1/export/xlsx-ticket", paths)
         self.assertIn("/webapp/v1/export/xlsx", paths)
         self.assertIn("/webapp/v1/absence/{absence_id}", paths)
 
@@ -367,6 +372,37 @@ class TestWebAppApi(unittest.IsolatedAsyncioTestCase):
         archive = zipfile.ZipFile(BytesIO(response.body))
         self.assertIn("xl/workbook.xml", archive.namelist())
         self.assertIn("xl/worksheets/sheet1.xml", archive.namelist())
+
+    async def test_export_xlsx_ticket_returns_download_url(self):
+        request = make_mocked_request(
+            "GET",
+            f"/webapp/v1/export/xlsx-ticket?scope_type=group&group_id={self.group_id}&year=2026",
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        response = await handle_export_xlsx_ticket(request)
+        payload = json.loads(response.text)
+        self.assertIn("/webapp/v1/export/xlsx?download_token=", payload["download_url"])
+        self.assertTrue(payload["filename"].endswith(".xlsx"))
+        self.assertEqual(payload["expires_in"], 60)
+
+    async def test_export_xlsx_ticket_can_be_consumed_once(self):
+        ticket_request = make_mocked_request(
+            "GET",
+            f"/webapp/v1/export/xlsx-ticket?scope_type=group&group_id={self.group_id}&year=2026",
+            headers={"X-Telegram-User-Id": "9001"},
+        )
+        ticket_response = await handle_export_xlsx_ticket(ticket_request)
+        ticket_payload = json.loads(ticket_response.text)
+        download_url = ticket_payload["download_url"]
+
+        first_request = make_mocked_request("GET", download_url)
+        first_response = await handle_export_xlsx(first_request)
+        archive = zipfile.ZipFile(BytesIO(first_response.body))
+        self.assertIn("xl/workbook.xml", archive.namelist())
+
+        second_request = make_mocked_request("GET", download_url)
+        with self.assertRaises(web.HTTPUnauthorized):
+            await handle_export_xlsx(second_request)
 
     async def test_export_xlsx_respects_acl(self):
         request = make_mocked_request(

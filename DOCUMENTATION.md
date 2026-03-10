@@ -389,6 +389,10 @@ Reply-кнопка `web_app` на части Telegram Desktop-клиентов �
 - `meta.total_intervals`;
 - `meta.max_absent_users`.
 
+`GET /webapp/v1/export/xlsx-ticket`
+
+- short-lived одноразовый ticket для запуска XLSX-скачивания из WebApp без передачи `initData` в URL.
+
 `GET /webapp/v1/absence/{absence_id}`
 
 - детали выбранного отсутствия.

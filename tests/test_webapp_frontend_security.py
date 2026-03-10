@@ -21,3 +21,5 @@ class TestWebAppFrontendSecurity(unittest.TestCase):
         self.assertIn('headers["X-Telegram-Init-Data"] = state.initData;', self.app_js)
         self.assertIn("headers.Authorization = `tma ${state.initData}`;", self.app_js)
 
+    def test_xlsx_export_uses_ticket_endpoint(self):
+        self.assertIn('/webapp/v1/export/xlsx-ticket', self.app_js)
