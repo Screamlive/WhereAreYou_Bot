@@ -1,6 +1,8 @@
 # Виртуальное окружение
 venv/
+.venv
 .venv/
+venv311/
 
 # Кэш Python
 __pycache__/
@@ -13,6 +15,7 @@ __pycache__/
 # Локальные БД
 *.db
 *.sqlite3
+backups/
 
 # Конфиг с секретами
 config.py
